@@ -7,7 +7,7 @@ name = "alberta-toolkit"
 version = "0.1.0"
 description = "Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.13"
 authors = [
     { name = "Keith", email = "keith@example.com" }

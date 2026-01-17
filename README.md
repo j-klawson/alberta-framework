@@ -1,18 +1,49 @@
-# Alberta Toolkit
+# Alberta Framework
 
-**Implementation of the Alberta Plan for AI Research** — a 12-step research agenda for building capable, continual learning systems.
+**A research-first framework for the Alberta Plan: Building the foundations of Continual AI.**
 
-## What is this?
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 
-The Alberta Toolkit is both a **research tool** and **reference implementation** for the ideas in the Alberta Plan (Sutton et al.). The Plan outlines a 12-step progression from simple supervised learning to full autonomous agents, with each step building on the previous.
+> "The agents are complex only because they interact with a complex world... their initial design is as simple, general, and scalable as possible." — *The Alberta Plan (Sutton et al., 2022)*
 
-### Core Principles
+## The Vision: A Massive Retreat
 
-1. **Temporal Uniformity**: Every component updates at every time step. No batch processing, no epochs — just continuous learning from a stream of experience.
+The **Alberta Framework** is an implementation of the 12-step research roadmap proposed by Richard Sutton, Michael Bowling, and Patrick Pilarski. We embrace a "massive retreat" from the complexities of modern batch-oriented deep learning to solve the fundamental problems of **continual learning** and **meta-learning** in their simplest, most rigorous settings.
 
-2. **Continual Learning**: The system learns forever from a non-stationary environment. The target function drifts, the optimal step-size changes, and the learner must adapt.
+### Why this exists?
 
-3. **Functional JAX**: Immutable state, pure functions, and composable components that work seamlessly with JAX's `jit`, `vmap`, and `grad`.
+Traditional AI systems are often "frozen" after training. In contrast, this framework is built for agents that live in the **Big World**—environments that are vastly more complex than the agent itself. Our goal is to provide the "bricks" for agents that learn, adapt, and construct their own representations from a continuous, non-stationary stream of experience.
+
+## Core Architectural Pillars
+
+### 1. Temporal Uniformity (The 1-Step Discipline)
+Every component in the framework follows the discipline of **Temporal Uniformity**. There are no special training periods, no "epochs," and no offline batch processing. If the agent learns, it learns at every time step. If it plans, it plans at every time step.
+
+### 2. Continual Meta-Learning
+The environment is non-stationary; targets drift and optimal step-sizes change. Our core learners utilize **IDBD (Incremental Delta-Bar-Delta)** to meta-learn per-feature learning rates ($\alpha_t^i$), allowing the agent to autonomously discover which signals are salient.
+
+### 3. Functional JAX Implementation
+To support the 10-year scaling vision of the Alberta Plan, the framework is built on **JAX**.
+* **Stateless Pure Functions**: Every update is a transformation: `(state, experience) -> new_state`.
+* **Hardware Accelerated**: Native support for JIT compilation, auto-vectorization (`vmap`), and gradients (`grad`).
+* **Scale-Invariant**: Logic defined for a single weight scales seamlessly to massive architectures.
+
+## Current Roadmap Progress
+
+- [x] **Step 1: Representation I** - Continual supervised learning with IDBD.
+- [ ] **Step 2: Representation II** - Supervised feature finding.
+- [ ] **Step 3: Prediction I** - Continual GVF learning (The Horde).
+- [ ] ...
+- [ ] **Step 11: Prototype-AI III** - Full OaK Architecture.
+
+## Getting Started
+
+### Installation
+```bash
+# Requires Python 3.13+
+pip install alberta-framework
+```
 
 ### The Alberta Plan Research Roadmap
 
@@ -299,4 +330,4 @@ Please ensure all tests pass and follow the existing code style.
 
 ## License
 
-MIT License
+Apache License 2.0
