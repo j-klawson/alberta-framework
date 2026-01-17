@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from alberta_toolkit import OnlineNormalizer, NormalizerState, create_normalizer_state
+from alberta_framework import OnlineNormalizer, NormalizerState, create_normalizer_state
 
 
 class TestOnlineNormalizer:

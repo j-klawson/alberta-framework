@@ -1,10 +1,10 @@
-# Alberta Toolkit
+# Alberta Framework
 
-Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes.
+A research-first framework for the Alberta Plan: Building the foundations of Continual AI.
 
 ## Project Overview
 
-This toolkit implements Step 1 of the Alberta Plan: demonstrating that IDBD (Incremental Delta-Bar-Delta) and Autostep with meta-learned step-sizes can match or beat hand-tuned LMS on non-stationary supervised learning problems.
+This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (Incremental Delta-Bar-Delta) and Autostep with meta-learned step-sizes can match or beat hand-tuned LMS on non-stationary supervised learning problems.
 
 **Core Philosophy**: Temporal uniformity — every component updates at every time step.
 
@@ -12,7 +12,7 @@ This toolkit implements Step 1 of the Alberta Plan: demonstrating that IDBD (Inc
 
 ### Package Structure
 ```
-src/alberta_toolkit/
+src/alberta_framework/
 ├── core/
 │   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
@@ -122,8 +122,8 @@ Wrap Gymnasium RL environments as experience streams for the framework.
 
 ### Example Usage
 ```python
-from alberta_toolkit import LinearLearner, IDBD, run_learning_loop
-from alberta_toolkit.streams.gymnasium import make_gymnasium_stream, PredictionMode
+from alberta_framework import LinearLearner, IDBD, run_learning_loop
+from alberta_framework.streams.gymnasium import make_gymnasium_stream, PredictionMode
 
 # Create stream from CartPole
 stream = make_gymnasium_stream(

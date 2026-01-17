@@ -1,4 +1,4 @@
-"""Pytest configuration and fixtures for Alberta Toolkit tests."""
+"""Pytest configuration and fixtures for Alberta Framework tests."""
 
 import pytest
 import jax.numpy as jnp

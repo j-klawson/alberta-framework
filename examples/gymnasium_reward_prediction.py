@@ -22,7 +22,7 @@ except ImportError:
         "Install it with: pip install gymnasium"
     )
 
-from alberta_toolkit import (
+from alberta_framework import (
     IDBD,
     LMS,
     LinearLearner,
@@ -30,7 +30,7 @@ from alberta_toolkit import (
     compute_tracking_error,
     run_learning_loop,
 )
-from alberta_toolkit.streams.gymnasium import (
+from alberta_framework.streams.gymnasium import (
     GymnasiumStream,
     PredictionMode,
     make_gymnasium_stream,

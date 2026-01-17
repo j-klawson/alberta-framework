@@ -19,7 +19,7 @@ Usage:
 
 import numpy as np
 
-from alberta_toolkit import (
+from alberta_framework import (
     Autostep,
     IDBD,
     LMS,

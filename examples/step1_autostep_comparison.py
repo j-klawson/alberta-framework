@@ -2,7 +2,7 @@
 """Step 1 Autostep Comparison: IDBD vs Autostep vs LMS.
 
 This script provides a comprehensive comparison of the three step-size
-adaptation strategies available in the Alberta Toolkit:
+adaptation strategies available in the Alberta Framework:
 
 1. LMS: Fixed step-size (requires manual tuning)
 2. IDBD: Meta-learned step-sizes via gradient correlation
@@ -18,7 +18,7 @@ Usage:
 
 import numpy as np
 
-from alberta_toolkit import (
+from alberta_framework import (
     Autostep,
     IDBD,
     LMS,

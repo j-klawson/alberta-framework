@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from alberta_toolkit import IDBD, LMS, LinearLearner, RandomWalkTarget, run_learning_loop
+from alberta_framework import IDBD, LMS, LinearLearner, RandomWalkTarget, run_learning_loop
 
 
 class TestLinearLearner:

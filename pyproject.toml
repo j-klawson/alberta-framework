@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alberta-toolkit"
+name = "alberta-framework"
 version = "0.1.0"
 description = "Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes"
 readme = "README.md"
@@ -43,11 +43,11 @@ gymnasium = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/keith/alberta-toolkit"
-Repository = "https://github.com/keith/alberta-toolkit"
+Homepage = "https://github.com/keith/alberta-framework"
+Repository = "https://github.com/keith/alberta-framework"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/alberta_toolkit"]
+packages = ["src/alberta_framework"]
 
 [tool.ruff]
 line-length = 100

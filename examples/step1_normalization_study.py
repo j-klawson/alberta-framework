@@ -15,7 +15,7 @@ Usage:
 
 import numpy as np
 
-from alberta_toolkit import (
+from alberta_framework import (
     IDBD,
     LinearLearner,
     NormalizedLinearLearner,
@@ -23,7 +23,7 @@ from alberta_toolkit import (
     run_learning_loop,
     run_normalized_learning_loop,
 )
-from alberta_toolkit.core.types import TimeStep
+from alberta_framework.core.types import TimeStep
 import jax.numpy as jnp
 import jax.random as jr
 

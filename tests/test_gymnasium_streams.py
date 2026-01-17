@@ -6,8 +6,8 @@ import pytest
 # Skip all tests if gymnasium is not installed
 gymnasium = pytest.importorskip("gymnasium")
 
-from alberta_toolkit import TimeStep
-from alberta_toolkit.streams.gymnasium import (
+from alberta_framework import TimeStep
+from alberta_framework.streams.gymnasium import (
     GymnasiumStream,
     PredictionMode,
     TDStream,

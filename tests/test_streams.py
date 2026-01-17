@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-from alberta_toolkit import (
+from alberta_framework import (
     AbruptChangeTarget,
     CyclicTarget,
     RandomWalkTarget,

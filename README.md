@@ -71,8 +71,8 @@ Step 1 demonstrates that meta-learned step-sizes can match or beat hand-tuned fi
 
 ```bash
 # From source
-git clone https://github.com/keith/alberta-toolkit.git
-cd alberta-toolkit
+git clone https://github.com/keith/alberta-framework.git
+cd alberta-framework
 pip install -e ".[dev]"
 
 # With Gymnasium support for RL environments
@@ -88,7 +88,7 @@ Requirements:
 ## Quick Start
 
 ```python
-from alberta_toolkit import LinearLearner, IDBD, RandomWalkTarget
+from alberta_framework import LinearLearner, IDBD, RandomWalkTarget
 
 # Create a non-stationary stream where the target drifts over time
 stream = RandomWalkTarget(feature_dim=10, drift_rate=0.001)
@@ -116,7 +116,7 @@ for step, timestep in enumerate(stream):
 Three step-size strategies with increasing sophistication:
 
 ```python
-from alberta_toolkit import LMS, IDBD, Autostep
+from alberta_framework import LMS, IDBD, Autostep
 
 # Fixed step-size (requires tuning)
 lms = LMS(step_size=0.01)
@@ -133,7 +133,7 @@ autostep = Autostep(initial_step_size=0.01, meta_step_size=0.01)
 Linear function approximators with pluggable optimizers:
 
 ```python
-from alberta_toolkit import LinearLearner, NormalizedLinearLearner, IDBD
+from alberta_framework import LinearLearner, NormalizedLinearLearner, IDBD
 
 # Basic learner
 learner = LinearLearner(optimizer=IDBD())
@@ -148,7 +148,7 @@ normalized_learner = NormalizedLinearLearner(optimizer=IDBD())
 Non-stationary target generators for testing continual learning:
 
 ```python
-from alberta_toolkit import RandomWalkTarget, AbruptChangeTarget, CyclicTarget
+from alberta_framework import RandomWalkTarget, AbruptChangeTarget, CyclicTarget
 
 # Gradual drift (target weights perform random walk)
 stream1 = RandomWalkTarget(feature_dim=10, drift_rate=0.001)
@@ -165,8 +165,8 @@ stream3 = CyclicTarget(feature_dim=10, num_configurations=4, cycle_length=500)
 Use any Gymnasium RL environment as an experience stream:
 
 ```python
-from alberta_toolkit import LinearLearner, IDBD, run_learning_loop
-from alberta_toolkit.streams.gymnasium import make_gymnasium_stream, PredictionMode
+from alberta_framework import LinearLearner, IDBD, run_learning_loop
+from alberta_framework.streams.gymnasium import make_gymnasium_stream, PredictionMode
 
 # Reward prediction: predict r from (s, a)
 stream = make_gymnasium_stream(
@@ -195,7 +195,7 @@ state, metrics = run_learning_loop(learner, stream, num_steps=10000)
 Streaming feature normalization for handling varying scales:
 
 ```python
-from alberta_toolkit import OnlineNormalizer
+from alberta_framework import OnlineNormalizer
 
 normalizer = OnlineNormalizer(decay=0.99)
 state = normalizer.init(feature_dim=10)
@@ -292,7 +292,7 @@ NormalizerState(mean, var, count, decay)      # Normalizer statistics
 ### Utility Functions
 
 ```python
-from alberta_toolkit import (
+from alberta_framework import (
     run_learning_loop,          # Run learning for N steps
     run_normalized_learning_loop,  # With normalization
     compute_tracking_error,     # Running mean of squared error
