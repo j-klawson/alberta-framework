@@ -193,10 +193,12 @@ results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 
 Documentation is built with MkDocs and mkdocstrings (auto-generated API docs from docstrings).
 
-**Published docs**: https://j-klawson.github.io/alberta-framework/
-
-### Deployment
-Docs are automatically deployed to GitHub Pages on every push to `main` via `.github/workflows/docs.yml`.
+### Local Preview
+```bash
+pip install -e ".[docs]"
+mkdocs serve          # Preview at http://localhost:8000
+mkdocs build          # Build static site to site/
+```
 
 ### Structure
 ```
