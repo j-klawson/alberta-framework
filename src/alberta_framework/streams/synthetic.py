@@ -166,6 +166,103 @@ class AbruptChangeTarget:
         return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
 
 
+class SuttonExperiment1Stream:
+    """Non-stationary stream replicating Experiment 1 from Sutton 1992.
+
+    This stream implements the exact task from Sutton's IDBD paper:
+    - 20 real-valued inputs drawn from N(0, 1)
+    - Only first 5 inputs are relevant (weights are ±1)
+    - Last 15 inputs are irrelevant (weights are 0)
+    - Every change_interval steps, one of the 5 relevant signs is flipped
+
+    Reference: Sutton, R.S. (1992). "Adapting Bias by Gradient Descent:
+    An Incremental Version of Delta-Bar-Delta"
+
+    Attributes:
+        num_relevant: Number of relevant inputs (default 5)
+        num_irrelevant: Number of irrelevant inputs (default 15)
+        change_interval: Steps between sign changes (default 20)
+    """
+
+    def __init__(
+        self,
+        num_relevant: int = 5,
+        num_irrelevant: int = 15,
+        change_interval: int = 20,
+        seed: int = 0,
+    ):
+        """Initialize the Sutton Experiment 1 stream.
+
+        Args:
+            num_relevant: Number of relevant inputs with ±1 weights
+            num_irrelevant: Number of irrelevant inputs with 0 weights
+            change_interval: Number of steps between sign flips
+            seed: Random seed for reproducibility
+        """
+        self._num_relevant = num_relevant
+        self._num_irrelevant = num_irrelevant
+        self._change_interval = change_interval
+        self._key = jr.key(seed)
+        self._step_count = 0
+
+        # Initialize signs for relevant inputs (all +1 initially)
+        self._signs: Array | None = None
+
+    @property
+    def feature_dim(self) -> int:
+        """Return the dimension of observation vectors."""
+        return self._num_relevant + self._num_irrelevant
+
+    @property
+    def true_weights(self) -> Array | None:
+        """Return current true weights (signs for relevant, zeros for irrelevant)."""
+        if self._signs is None:
+            return None
+        zeros = jnp.zeros(self._num_irrelevant, dtype=jnp.float32)
+        return jnp.concatenate([self._signs, zeros])
+
+    def __iter__(self) -> Iterator[TimeStep]:
+        """Return self as iterator."""
+        return self
+
+    def __next__(self) -> TimeStep:
+        """Generate the next time step.
+
+        At each step:
+        1. If at a change interval, flip one random sign
+        2. Generate random inputs from N(0, 1)
+        3. Compute target as sum of relevant inputs weighted by signs
+
+        Returns:
+            TimeStep with observation and target
+        """
+        self._key, key_x, key_which = jr.split(self._key, 3)
+
+        # Initialize signs if first step
+        if self._signs is None:
+            self._signs = jnp.ones(self._num_relevant, dtype=jnp.float32)
+
+        # Flip one random sign at change intervals (but not at step 0)
+        if self._step_count > 0 and self._step_count % self._change_interval == 0:
+            # Select which sign to flip (0 to num_relevant-1)
+            idx_to_flip = jr.randint(key_which, (), 0, self._num_relevant)
+            # Flip the sign: multiply by -1 at the selected index
+            flip_mask = jnp.ones(self._num_relevant, dtype=jnp.float32)
+            flip_mask = flip_mask.at[idx_to_flip].set(-1.0)
+            self._signs = self._signs * flip_mask
+
+        self._step_count += 1
+
+        # Generate observation from N(0, 1)
+        x = jr.normal(key_x, (self.feature_dim,), dtype=jnp.float32)
+
+        # Compute target: sum of first num_relevant inputs weighted by signs
+        # y* = s1*x1 + s2*x2 + ... + s_k*x_k (no noise)
+        y_star = jnp.dot(self._signs, x[: self._num_relevant])
+
+        return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
+
+
 class CyclicTarget:
     """Non-stationary stream that cycles between known weight configurations.
 

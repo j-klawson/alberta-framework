@@ -20,7 +20,7 @@ src/alberta_framework/
 │   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop
 ├── streams/
 │   ├── base.py         # ExperienceStream protocol
-│   ├── synthetic.py    # RandomWalkTarget, AbruptChangeTarget, CyclicTarget
+│   ├── synthetic.py    # RandomWalkTarget, AbruptChangeTarget, CyclicTarget, SuttonExperiment1Stream
 │   └── gymnasium.py    # GymnasiumStream, TDStream, PredictionMode (optional)
 └── utils/
     ├── metrics.py      # compute_tracking_error, compare_learners, etc.
@@ -48,6 +48,9 @@ pytest tests/ -v
 python examples/step1_idbd_vs_lms.py
 python examples/step1_normalization_study.py
 python examples/step1_autostep_comparison.py
+
+# Run Sutton 1992 Experiment 1 replication
+python examples/sutton1992_experiment1.py
 
 # Run Gymnasium examples (requires gymnasium)
 python examples/gymnasium_reward_prediction.py
