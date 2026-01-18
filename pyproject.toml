@@ -62,6 +62,10 @@ warn_return_any = true
 warn_unused_ignores = true
 strict = true
 
+[[tool.mypy.overrides]]
+module = "gymnasium.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"

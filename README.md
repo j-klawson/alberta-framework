@@ -2,7 +2,7 @@
 
 **A research-first framework for the Alberta Plan: Building the foundations of Continual AI.**
 
-[![CI](https://github.com/keith/alberta-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/keith/alberta-framework/actions/workflows/ci.yml)
+[![CI](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 
@@ -72,7 +72,7 @@ Step 1 demonstrates that meta-learned step-sizes can match or beat hand-tuned fi
 
 ```bash
 # From source
-git clone https://github.com/keith/alberta-framework.git
+git clone https://github.com/j-klawson/alberta-framework.git
 cd alberta-framework
 pip install -e ".[dev]"
 
