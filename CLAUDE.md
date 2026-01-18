@@ -193,6 +193,11 @@ results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 
 Documentation is built with MkDocs and mkdocstrings (auto-generated API docs from docstrings).
 
+**Published docs**: https://j-klawson.github.io/alberta-framework/
+
+### Deployment
+Docs are automatically deployed to GitHub Pages on every push to `main` via `.github/workflows/docs.yml`.
+
 ### Structure
 ```
 docs/
@@ -203,6 +208,9 @@ docs/
 └── gen_ref_pages.py         # Auto-generates API reference
 mkdocs.yml                   # MkDocs configuration
 ```
+
+### API Reference
+The API Reference section is auto-generated from docstrings in the source code. Every public class, method, and function is documented. The `gen_ref_pages.py` script scans all `.py` files and creates reference pages using mkdocstrings.
 
 ### Docstring Style
 Use NumPy-style docstrings for all public functions and classes. See `core/optimizers.py` for examples.
