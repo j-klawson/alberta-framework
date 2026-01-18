@@ -6,21 +6,18 @@ learning with meta-learned step-sizes.
 Core Philosophy: Temporal uniformity - every component updates at every time step.
 
 Quick Start:
-    >>> from alberta_framework import LinearLearner, IDBD, RandomWalkTarget
+    >>> import jax.random as jr
+    >>> from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop
     >>>
     >>> # Create a non-stationary stream
-    >>> stream = RandomWalkTarget(feature_dim=10, drift_rate=0.001)
+    >>> stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
     >>>
     >>> # Create a learner with adaptive step-sizes
     >>> learner = LinearLearner(optimizer=IDBD())
     >>>
-    >>> # Run learning loop
-    >>> state = learner.init(stream.feature_dim)
-    >>> for step, timestep in enumerate(stream):
-    ...     if step >= 10000:
-    ...         break
-    ...     result = learner.update(state, timestep.observation, timestep.target)
-    ...     state = result.state
+    >>> # Run learning loop with scan
+    >>> key = jr.key(42)
+    >>> state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=key)
 
 Reference: The Alberta Plan for AI Research (Sutton et al.)
 """
@@ -28,24 +25,6 @@ Reference: The Alberta Plan for AI Research (Sutton et al.)
 __version__ = "0.1.0"
 
 # Core types
-# Learners
-from alberta_framework.core.learners import (
-    LinearLearner,
-    NormalizedLearnerState,
-    NormalizedLinearLearner,
-    run_learning_loop,
-    run_normalized_learning_loop,
-)
-
-# Normalizers
-from alberta_framework.core.normalizers import (
-    NormalizerState,
-    OnlineNormalizer,
-    create_normalizer_state,
-)
-
-# Optimizers
-from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
 from alberta_framework.core.types import (
     AutostepState,
     IDBDState,
@@ -57,28 +36,44 @@ from alberta_framework.core.types import (
     TimeStep,
 )
 
-# Streams
-from alberta_framework.streams.base import ExperienceStream
-from alberta_framework.streams.synthetic import (
-    AbruptChangeTarget,
-    CyclicTarget,
-    RandomWalkTarget,
+# Optimizers
+from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
+
+# Normalizers
+from alberta_framework.core.normalizers import (
+    NormalizerState,
+    OnlineNormalizer,
+    create_normalizer_state,
 )
 
-# Gymnasium streams (optional)
-try:
-    from alberta_framework.streams.gymnasium import (
-        GymnasiumStream,
-        PredictionMode,
-        TDStream,
-        make_epsilon_greedy_policy,
-        make_gymnasium_stream,
-        make_random_policy,
-    )
+# Learners
+from alberta_framework.core.learners import (
+    LinearLearner,
+    NormalizedLearnerState,
+    NormalizedLinearLearner,
+    UpdateResult,
+    metrics_to_dicts,
+    run_learning_loop,
+    run_normalized_learning_loop,
+)
 
-    _gymnasium_available = True
-except ImportError:
-    _gymnasium_available = False
+# Streams - base
+from alberta_framework.streams.base import ScanStream
+
+# Streams - synthetic
+from alberta_framework.streams.synthetic import (
+    AbruptChangeState,
+    AbruptChangeStream,
+    AbruptChangeTarget,
+    CyclicState,
+    CyclicStream,
+    CyclicTarget,
+    RandomWalkState,
+    RandomWalkStream,
+    RandomWalkTarget,
+    SuttonExperiment1State,
+    SuttonExperiment1Stream,
+)
 
 # Utilities
 from alberta_framework.utils.metrics import (
@@ -88,6 +83,24 @@ from alberta_framework.utils.metrics import (
     compute_tracking_error,
     extract_metric,
 )
+
+# Gymnasium streams (optional)
+try:
+    from alberta_framework.streams.gymnasium import (
+        GymnasiumStream,
+        PredictionMode,
+        TDStream,
+        collect_trajectory,
+        learn_from_trajectory,
+        learn_from_trajectory_normalized,
+        make_epsilon_greedy_policy,
+        make_gymnasium_stream,
+        make_random_policy,
+    )
+
+    _gymnasium_available = True
+except ImportError:
+    _gymnasium_available = False
 
 __all__ = [
     # Version
@@ -102,6 +115,7 @@ __all__ = [
     "Prediction",
     "Target",
     "TimeStep",
+    "UpdateResult",
     # Optimizers
     "Autostep",
     "IDBD",
@@ -116,11 +130,21 @@ __all__ = [
     "NormalizedLinearLearner",
     "run_learning_loop",
     "run_normalized_learning_loop",
-    # Streams
+    "metrics_to_dicts",
+    # Streams - protocol
+    "ScanStream",
+    # Streams - synthetic
+    "AbruptChangeState",
+    "AbruptChangeStream",
     "AbruptChangeTarget",
+    "CyclicState",
+    "CyclicStream",
     "CyclicTarget",
-    "ExperienceStream",
+    "RandomWalkState",
+    "RandomWalkStream",
     "RandomWalkTarget",
+    "SuttonExperiment1State",
+    "SuttonExperiment1Stream",
     # Utilities
     "compare_learners",
     "compute_cumulative_error",
@@ -135,6 +159,9 @@ if _gymnasium_available:
         "GymnasiumStream",
         "PredictionMode",
         "TDStream",
+        "collect_trajectory",
+        "learn_from_trajectory",
+        "learn_from_trajectory_normalized",
         "make_epsilon_greedy_policy",
         "make_gymnasium_stream",
         "make_random_policy",

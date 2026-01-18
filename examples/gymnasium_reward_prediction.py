@@ -22,17 +22,12 @@ except ImportError:
         "Install it with: pip install gymnasium"
     )
 
-from alberta_framework import (
-    IDBD,
-    LMS,
-    LinearLearner,
-    compare_learners,
-    compute_tracking_error,
-    run_learning_loop,
-)
+from alberta_framework import IDBD, LMS, LinearLearner, compare_learners
 from alberta_framework.streams.gymnasium import (
     GymnasiumStream,
     PredictionMode,
+    collect_trajectory,
+    learn_from_trajectory,
     make_gymnasium_stream,
 )
 
@@ -44,6 +39,8 @@ def run_reward_prediction_experiment(
 ) -> dict:
     """Run reward prediction experiment comparing IDBD vs LMS.
 
+    Uses trajectory collection for efficient scan-based learning.
+
     Args:
         env_id: Gymnasium environment ID
         num_steps: Number of learning steps
@@ -54,19 +51,30 @@ def run_reward_prediction_experiment(
     """
     results = {}
 
+    # Collect trajectory once (reused for all learners)
+    env = gymnasium.make(env_id)
+    observations, targets = collect_trajectory(
+        env=env,
+        policy=None,  # Random policy
+        num_steps=num_steps,
+        mode=PredictionMode.REWARD,
+        include_action_in_features=True,
+        seed=seed,
+    )
+    env.close()
+
     # LMS with various step-sizes
     lms_step_sizes = [0.001, 0.005, 0.01, 0.05, 0.1]
 
     for alpha in lms_step_sizes:
-        stream = make_gymnasium_stream(
-            env_id,
-            mode=PredictionMode.REWARD,
-            include_action_in_features=True,
-            seed=seed,
-        )
         learner = LinearLearner(optimizer=LMS(step_size=alpha))
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"LMS(α={alpha})"] = metrics
+        _, metrics = learn_from_trajectory(learner, observations, targets)
+        # Convert metrics array to list of dicts
+        metrics_list = [
+            {"squared_error": float(metrics[i, 0]), "error": float(metrics[i, 1])}
+            for i in range(metrics.shape[0])
+        ]
+        results[f"LMS(α={alpha})"] = metrics_list
 
     # IDBD with various configurations
     idbd_configs = [
@@ -76,17 +84,15 @@ def run_reward_prediction_experiment(
     ]
 
     for initial_alpha, beta in idbd_configs:
-        stream = make_gymnasium_stream(
-            env_id,
-            mode=PredictionMode.REWARD,
-            include_action_in_features=True,
-            seed=seed,
-        )
         learner = LinearLearner(
             optimizer=IDBD(initial_step_size=initial_alpha, meta_step_size=beta)
         )
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics
+        _, metrics = learn_from_trajectory(learner, observations, targets)
+        metrics_list = [
+            {"squared_error": float(metrics[i, 0]), "error": float(metrics[i, 1])}
+            for i in range(metrics.shape[0])
+        ]
+        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics_list
 
     return results
 
@@ -158,6 +164,8 @@ def plot_learning_curves(results: dict, env_id: str, save_path: str | None = Non
     except ImportError:
         print("matplotlib not installed, skipping plot")
         return
+
+    from alberta_framework import compute_tracking_error
 
     _, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
 

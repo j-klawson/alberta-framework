@@ -1,11 +1,13 @@
 """Learning units for continual learning.
 
 Implements learners that combine function approximation with optimizers
-for temporally-uniform learning.
+for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
+training loops.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, TypeVar
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -20,12 +22,13 @@ from alberta_framework.core.types import (
     Prediction,
     Target,
 )
-from alberta_framework.streams.base import ExperienceStream
+from alberta_framework.streams.base import ScanStream
 
 # Type alias for any optimizer type
-AnyOptimizer = (
-    Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
-)
+AnyOptimizer = Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
+
+# Type variable for stream state
+StreamStateT = TypeVar("StreamStateT")
 
 
 class UpdateResult(NamedTuple):
@@ -35,13 +38,13 @@ class UpdateResult(NamedTuple):
         state: Updated learner state
         prediction: Prediction made before update
         error: Prediction error
-        metrics: Dictionary of metrics for logging
+        metrics: Array of metrics [squared_error, error, ...]
     """
 
     state: LearnerState
     prediction: Prediction
     error: Array
-    metrics: dict[str, float]
+    metrics: Array
 
 
 class LinearLearner:
@@ -143,13 +146,11 @@ class LinearLearner:
             optimizer_state=opt_update.new_state,
         )
 
-        # Compute metrics
-        squared_error = float(error**2)
-        metrics = {
-            "squared_error": squared_error,
-            "error": float(error),
-            **opt_update.metrics,
-        }
+        # Pack metrics as array for scan compatibility
+        # Format: [squared_error, error, mean_step_size (if adaptive)]
+        squared_error = error**2
+        mean_step_size = opt_update.metrics.get("mean_step_size", 0.0)
+        metrics = jnp.array([squared_error, error, mean_step_size], dtype=jnp.float32)
 
         return UpdateResult(
             state=new_state,
@@ -161,36 +162,43 @@ class LinearLearner:
 
 def run_learning_loop(
     learner: LinearLearner,
-    stream: ExperienceStream,
+    stream: ScanStream[StreamStateT],
     num_steps: int,
-    state: LearnerState | None = None,
-) -> tuple[LearnerState, list[dict[str, float]]]:
-    """Run the learning loop for a fixed number of steps.
+    key: Array,
+    learner_state: LearnerState | None = None,
+) -> tuple[LearnerState, Array]:
+    """Run the learning loop using jax.lax.scan.
+
+    This is a JIT-compiled learning loop that uses scan for efficiency.
+    It returns metrics as a fixed-size array rather than a list of dicts.
 
     Args:
         learner: The learner to train
         stream: Experience stream providing (observation, target) pairs
         num_steps: Number of learning steps to run
-        state: Initial state (if None, will be initialized from stream)
+        key: JAX random key for stream initialization
+        learner_state: Initial state (if None, will be initialized from stream)
 
     Returns:
-        Tuple of (final_state, list of metrics per step)
+        Tuple of (final_state, metrics_array) where metrics_array has shape
+        (num_steps, 3) with columns [squared_error, error, mean_step_size]
     """
-    # Initialize state if not provided
-    if state is None:
-        state = learner.init(stream.feature_dim)
+    # Initialize states
+    if learner_state is None:
+        learner_state = learner.init(stream.feature_dim)
+    stream_state = stream.init(key)
 
-    metrics_history: list[dict[str, float]] = []
+    def step_fn(carry, idx):
+        l_state, s_state = carry
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(l_state, timestep.observation, timestep.target)
+        return (result.state, new_s_state), result.metrics
 
-    for step, time_step in enumerate(stream):
-        if step >= num_steps:
-            break
+    (final_learner, _), metrics = jax.lax.scan(
+        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+    )
 
-        result = learner.update(state, time_step.observation, time_step.target)
-        state = result.state
-        metrics_history.append(result.metrics)
-
-    return state, metrics_history
+    return final_learner, metrics
 
 
 class NormalizedLearnerState(NamedTuple):
@@ -212,13 +220,13 @@ class NormalizedUpdateResult(NamedTuple):
         state: Updated normalized learner state
         prediction: Prediction made before update
         error: Prediction error
-        metrics: Dictionary of metrics for logging
+        metrics: Array of metrics [squared_error, error, mean_step_size, normalizer_mean_var]
     """
 
     state: NormalizedLearnerState
     prediction: Prediction
     error: Array
-    metrics: dict[str, float]
+    metrics: Array
 
 
 class NormalizedLinearLearner:
@@ -328,11 +336,9 @@ class NormalizedLinearLearner:
             normalizer_state=new_normalizer_state,
         )
 
-        # Add normalizer metrics
-        metrics = {
-            **result.metrics,
-            "normalizer_mean_var": float(jnp.mean(new_normalizer_state.var)),
-        }
+        # Add normalizer metrics to the metrics array
+        normalizer_mean_var = jnp.mean(new_normalizer_state.var)
+        metrics = jnp.concatenate([result.metrics, jnp.array([normalizer_mean_var])])
 
         return NormalizedUpdateResult(
             state=new_state,
@@ -344,33 +350,60 @@ class NormalizedLinearLearner:
 
 def run_normalized_learning_loop(
     learner: NormalizedLinearLearner,
-    stream: ExperienceStream,
+    stream: ScanStream[StreamStateT],
     num_steps: int,
-    state: NormalizedLearnerState | None = None,
-) -> tuple[NormalizedLearnerState, list[dict[str, float]]]:
-    """Run the learning loop with normalization for a fixed number of steps.
+    key: Array,
+    learner_state: NormalizedLearnerState | None = None,
+) -> tuple[NormalizedLearnerState, Array]:
+    """Run the learning loop with normalization using jax.lax.scan.
 
     Args:
         learner: The normalized learner to train
         stream: Experience stream providing (observation, target) pairs
         num_steps: Number of learning steps to run
-        state: Initial state (if None, will be initialized from stream)
+        key: JAX random key for stream initialization
+        learner_state: Initial state (if None, will be initialized from stream)
 
     Returns:
-        Tuple of (final_state, list of metrics per step)
+        Tuple of (final_state, metrics_array) where metrics_array has shape
+        (num_steps, 4) with columns [squared_error, error, mean_step_size, normalizer_mean_var]
     """
-    # Initialize state if not provided
-    if state is None:
-        state = learner.init(stream.feature_dim)
+    # Initialize states
+    if learner_state is None:
+        learner_state = learner.init(stream.feature_dim)
+    stream_state = stream.init(key)
 
-    metrics_history: list[dict[str, float]] = []
+    def step_fn(carry, idx):
+        l_state, s_state = carry
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(l_state, timestep.observation, timestep.target)
+        return (result.state, new_s_state), result.metrics
 
-    for step, time_step in enumerate(stream):
-        if step >= num_steps:
-            break
+    (final_learner, _), metrics = jax.lax.scan(
+        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+    )
 
-        result = learner.update(state, time_step.observation, time_step.target)
-        state = result.state
-        metrics_history.append(result.metrics)
+    return final_learner, metrics
 
-    return state, metrics_history
+
+def metrics_to_dicts(metrics: Array, normalized: bool = False) -> list[dict[str, float]]:
+    """Convert metrics array to list of dicts for backward compatibility.
+
+    Args:
+        metrics: Array of shape (num_steps, 3) or (num_steps, 4)
+        normalized: If True, expects 4 columns including normalizer_mean_var
+
+    Returns:
+        List of metric dictionaries
+    """
+    result = []
+    for row in metrics:
+        d = {
+            "squared_error": float(row[0]),
+            "error": float(row[1]),
+            "mean_step_size": float(row[2]),
+        }
+        if normalized and len(row) > 3:
+            d["normalizer_mean_var"] = float(row[3])
+        result.append(d)
+    return result

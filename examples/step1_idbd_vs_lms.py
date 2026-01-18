@@ -17,6 +17,7 @@ Usage:
     python examples/step1_idbd_vs_lms.py
 """
 
+import jax.random as jr
 import numpy as np
 
 from alberta_framework import (
@@ -24,9 +25,10 @@ from alberta_framework import (
     IDBD,
     LMS,
     LinearLearner,
-    RandomWalkTarget,
+    RandomWalkStream,
     compare_learners,
     compute_tracking_error,
+    metrics_to_dicts,
     run_learning_loop,
 )
 
@@ -57,15 +59,15 @@ def run_experiment(
 
     # Run LMS with each step-size
     for alpha in lms_step_sizes:
-        stream = RandomWalkTarget(
+        stream = RandomWalkStream(
             feature_dim=feature_dim,
             drift_rate=drift_rate,
             noise_std=noise_std,
-            seed=seed,
         )
         learner = LinearLearner(optimizer=LMS(step_size=alpha))
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"LMS(α={alpha})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"LMS(α={alpha})"] = metrics_to_dicts(metrics)
 
     # Run IDBD with various meta step-sizes
     idbd_configs = [
@@ -76,17 +78,17 @@ def run_experiment(
     ]
 
     for initial_alpha, beta in idbd_configs:
-        stream = RandomWalkTarget(
+        stream = RandomWalkStream(
             feature_dim=feature_dim,
             drift_rate=drift_rate,
             noise_std=noise_std,
-            seed=seed,
         )
         learner = LinearLearner(
             optimizer=IDBD(initial_step_size=initial_alpha, meta_step_size=beta)
         )
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics_to_dicts(metrics)
 
     # Run Autostep with various configurations
     autostep_configs = [
@@ -96,17 +98,17 @@ def run_experiment(
     ]
 
     for initial_alpha, mu in autostep_configs:
-        stream = RandomWalkTarget(
+        stream = RandomWalkStream(
             feature_dim=feature_dim,
             drift_rate=drift_rate,
             noise_std=noise_std,
-            seed=seed,
         )
         learner = LinearLearner(
             optimizer=Autostep(initial_step_size=initial_alpha, meta_step_size=mu)
         )
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"Autostep(α₀={initial_alpha},μ={mu})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"Autostep(α₀={initial_alpha},μ={mu})"] = metrics_to_dicts(metrics)
 
     return results
 
@@ -245,20 +247,24 @@ def run_practical_comparison(
     print("IDBD can adapt; LMS is stuck.\n")
 
     # LMS stuck at initial step-size
-    stream = RandomWalkTarget(
-        feature_dim=feature_dim, drift_rate=0.001, noise_std=0.1, seed=seed
+    stream = RandomWalkStream(
+        feature_dim=feature_dim, drift_rate=0.001, noise_std=0.1
     )
     learner = LinearLearner(optimizer=LMS(step_size=initial_step_size))
-    _, lms_metrics = run_learning_loop(learner, stream, num_steps)
+    key = jr.key(seed)
+    _, lms_metrics = run_learning_loop(learner, stream, num_steps, key)
+    lms_metrics = metrics_to_dicts(lms_metrics)
 
     # IDBD starting at same step-size but can adapt
-    stream = RandomWalkTarget(
-        feature_dim=feature_dim, drift_rate=0.001, noise_std=0.1, seed=seed
+    stream = RandomWalkStream(
+        feature_dim=feature_dim, drift_rate=0.001, noise_std=0.1
     )
     learner = LinearLearner(
         optimizer=IDBD(initial_step_size=initial_step_size, meta_step_size=0.05)
     )
-    _, idbd_metrics = run_learning_loop(learner, stream, num_steps)
+    key = jr.key(seed)
+    _, idbd_metrics = run_learning_loop(learner, stream, num_steps, key)
+    idbd_metrics = metrics_to_dicts(idbd_metrics)
 
     lms_cumulative = sum(m["squared_error"] for m in lms_metrics)
     idbd_cumulative = sum(m["squared_error"] for m in idbd_metrics)

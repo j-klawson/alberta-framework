@@ -25,13 +25,13 @@ class OptimizerUpdate(NamedTuple):
         weight_delta: Change to apply to weights
         bias_delta: Change to apply to bias
         new_state: Updated optimizer state
-        metrics: Dictionary of metrics for logging
+        metrics: Dictionary of metrics for logging (values are JAX arrays for scan compatibility)
     """
 
     weight_delta: Array
     bias_delta: Array
     new_state: LMSState | IDBDState | AutostepState
-    metrics: dict[str, float]
+    metrics: dict[str, Array]
 
 
 class Optimizer[StateT: (LMSState, IDBDState, AutostepState)](ABC):
@@ -131,7 +131,7 @@ class LMS(Optimizer[LMSState]):
             weight_delta=weight_delta,
             bias_delta=bias_delta,
             new_state=state,  # LMS state doesn't change
-            metrics={"step_size": float(alpha)},
+            metrics={"step_size": alpha},
         )
 
 
@@ -255,19 +255,14 @@ class IDBD(Optimizer[IDBDState]):
             bias_trace=new_bias_trace,
         )
 
-        # Compute metrics
-        mean_step_size = float(jnp.mean(alphas))
-        min_step_size = float(jnp.min(alphas))
-        max_step_size = float(jnp.max(alphas))
-
         return OptimizerUpdate(
             weight_delta=weight_delta,
             bias_delta=bias_delta,
             new_state=new_state,
             metrics={
-                "mean_step_size": mean_step_size,
-                "min_step_size": min_step_size,
-                "max_step_size": max_step_size,
+                "mean_step_size": jnp.mean(alphas),
+                "min_step_size": jnp.min(alphas),
+                "max_step_size": jnp.max(alphas),
             },
         )
 
@@ -414,20 +409,14 @@ class Autostep(Optimizer[AutostepState]):
             bias_normalizer=new_bias_normalizer,
         )
 
-        # Compute metrics
-        mean_step_size = float(jnp.mean(state.step_sizes))
-        min_step_size = float(jnp.min(state.step_sizes))
-        max_step_size = float(jnp.max(state.step_sizes))
-        mean_normalizer = float(jnp.mean(state.normalizers))
-
         return OptimizerUpdate(
             weight_delta=weight_delta,
             bias_delta=bias_delta,
             new_state=new_state,
             metrics={
-                "mean_step_size": mean_step_size,
-                "min_step_size": min_step_size,
-                "max_step_size": max_step_size,
-                "mean_normalizer": mean_normalizer,
+                "mean_step_size": jnp.mean(state.step_sizes),
+                "min_step_size": jnp.min(state.step_sizes),
+                "max_step_size": jnp.max(state.step_sizes),
+                "mean_normalizer": jnp.mean(state.normalizers),
             },
         )

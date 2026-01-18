@@ -1,9 +1,17 @@
 """Tests for LinearLearner."""
 
 import jax.numpy as jnp
+import jax.random as jr
 import pytest
 
-from alberta_framework import IDBD, LMS, LinearLearner, RandomWalkTarget, run_learning_loop
+from alberta_framework import (
+    IDBD,
+    LMS,
+    LinearLearner,
+    RandomWalkStream,
+    metrics_to_dicts,
+    run_learning_loop,
+)
 
 
 class TestLinearLearner:
@@ -56,16 +64,16 @@ class TestLinearLearner:
 
         assert final_error < initial_error
 
-    def test_update_returns_correct_metrics(self, feature_dim, sample_observation, sample_target):
-        """Update should return squared error and other metrics."""
+    def test_update_returns_correct_metrics_array(self, feature_dim, sample_observation, sample_target):
+        """Update should return metrics array with squared error."""
         learner = LinearLearner()
         state = learner.init(feature_dim)
 
         result = learner.update(state, sample_observation, sample_target)
 
-        assert "squared_error" in result.metrics
-        assert "error" in result.metrics
-        assert result.metrics["squared_error"] >= 0
+        # Metrics are now an array [squared_error, error, mean_step_size]
+        assert result.metrics.shape == (3,)
+        assert result.metrics[0] >= 0  # squared_error
 
     def test_works_with_idbd_optimizer(self, feature_dim, sample_observation, sample_target):
         """Learner should work correctly with IDBD optimizer."""
@@ -75,56 +83,75 @@ class TestLinearLearner:
         result = learner.update(state, sample_observation, sample_target)
 
         assert result.state is not None
-        assert "mean_step_size" in result.metrics
+        # Metrics array: [squared_error, error, mean_step_size]
+        assert result.metrics.shape == (3,)
 
 
 class TestRunLearningLoop:
     """Tests for the run_learning_loop helper function."""
 
-    def test_returns_correct_number_of_metrics(self):
+    def test_returns_correct_number_of_metrics(self, rng_key):
         """Should return metrics for each step."""
-        stream = RandomWalkTarget(feature_dim=5, seed=42)
+        stream = RandomWalkStream(feature_dim=5)
         learner = LinearLearner()
 
         num_steps = 100
-        _, metrics = run_learning_loop(learner, stream, num_steps)
+        _, metrics = run_learning_loop(learner, stream, num_steps, rng_key)
 
-        assert len(metrics) == num_steps
+        # Metrics is now an array of shape (num_steps, 3)
+        assert metrics.shape == (num_steps, 3)
 
-    def test_returns_valid_final_state(self):
+    def test_returns_valid_final_state(self, rng_key):
         """Final state should have correct structure."""
-        stream = RandomWalkTarget(feature_dim=5, seed=42)
+        stream = RandomWalkStream(feature_dim=5)
         learner = LinearLearner()
 
-        state, _ = run_learning_loop(learner, stream, num_steps=50)
+        state, _ = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
 
         assert state.weights.shape == (5,)
         assert jnp.all(jnp.isfinite(state.weights))
 
-    def test_can_resume_from_existing_state(self):
+    def test_can_resume_from_existing_state(self, rng_key):
         """Should be able to continue from a previous state."""
-        stream = RandomWalkTarget(feature_dim=5, seed=42)
+        stream = RandomWalkStream(feature_dim=5)
         learner = LinearLearner()
 
         # First run
-        state1, _ = run_learning_loop(learner, stream, num_steps=50)
+        key1, key2 = jr.split(rng_key)
+        state1, _ = run_learning_loop(learner, stream, num_steps=50, key=key1)
 
-        # Continue from state1
-        state2, _ = run_learning_loop(learner, stream, num_steps=50, state=state1)
+        # Continue from state1 with new key for stream
+        state2, _ = run_learning_loop(
+            learner, stream, num_steps=50, key=key2, learner_state=state1
+        )
 
         # Weights should have changed
         assert not jnp.allclose(state1.weights, state2.weights)
 
-    def test_error_decreases_on_stationary_target(self):
+    def test_error_decreases_on_stationary_target(self, rng_key):
         """On a stationary target, error should decrease over time."""
         # Use zero drift for stationary target
-        stream = RandomWalkTarget(feature_dim=5, drift_rate=0.0, seed=42)
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.0)
         learner = LinearLearner(optimizer=LMS(step_size=0.01))
 
-        _, metrics = run_learning_loop(learner, stream, num_steps=1000)
+        _, metrics = run_learning_loop(learner, stream, num_steps=1000, key=rng_key)
+
+        # Convert to dicts for easier access
+        metrics_list = metrics_to_dicts(metrics)
 
         # Compare first 100 vs last 100 average error
-        early_error = sum(m["squared_error"] for m in metrics[:100]) / 100
-        late_error = sum(m["squared_error"] for m in metrics[-100:]) / 100
+        early_error = sum(m["squared_error"] for m in metrics_list[:100]) / 100
+        late_error = sum(m["squared_error"] for m in metrics_list[-100:]) / 100
 
         assert late_error < early_error
+
+    def test_deterministic_with_same_key(self, rng_key):
+        """Same key should produce same results."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+
+        state1, metrics1 = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
+        state2, metrics2 = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
+
+        assert jnp.allclose(state1.weights, state2.weights)
+        assert jnp.allclose(metrics1, metrics2)

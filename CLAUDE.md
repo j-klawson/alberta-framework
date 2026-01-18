@@ -17,11 +17,11 @@ src/alberta_framework/
 │   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop
+│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
 ├── streams/
-│   ├── base.py         # ExperienceStream protocol
-│   ├── synthetic.py    # RandomWalkTarget, AbruptChangeTarget, CyclicTarget, SuttonExperiment1Stream
-│   └── gymnasium.py    # GymnasiumStream, TDStream, PredictionMode (optional)
+│   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
+│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, SuttonExperiment1Stream
+│   └── gymnasium.py    # collect_trajectory, learn_from_trajectory, GymnasiumStream (optional)
 └── utils/
     ├── metrics.py      # compute_tracking_error, compare_learners, etc.
     ├── experiments.py  # ExperimentConfig, run_multi_seed_experiment, AggregatedResults
@@ -68,14 +68,16 @@ mkdocs build          # Build static site to site/
 
 ### Design Principles
 - **Immutable State**: All state uses NamedTuples for JAX compatibility
-- **Functional Style**: Pure functions enable `jit`, `vmap`
+- **Functional Style**: Pure functions enable `jit`, `vmap`, `jax.lax.scan`
+- **Scan-Based Learning**: Learning loops use `jax.lax.scan` for JIT-compiled training
 - **Composition**: Learners accept optimizers as parameters
 - **Temporal Uniformity**: Every component updates at every time step
 
 ### JAX Conventions
 - Use `jax.numpy` (imported as `jnp`) not regular numpy for array operations
-- Use `jax.random` with explicit key management
+- Use `jax.random` with explicit key management: `key = jr.key(seed)`
 - State is immutable - return new state objects, don't mutate
+- Streams use `ScanStream` protocol with `init(key)` and `step(state, idx)` methods
 
 ### Testing
 - Tests are in `tests/` directory
@@ -128,31 +130,36 @@ Wrap Gymnasium RL environments as experience streams for the framework.
 - **NEXT_STATE**: Predict next state from (state, action)
 - **VALUE**: Predict cumulative return (TD learning)
 
-### Key Classes
-- `GymnasiumStream`: Main wrapper, auto-resets on episode boundaries
-- `TDStream`: For proper TD learning with value function bootstrap
-- `PredictionMode`: Enum for prediction mode selection
-
-### Factory Functions
-- `make_gymnasium_stream(env_id, mode, ...)`: Create stream from env ID
+### Key Functions
+- `collect_trajectory(env, policy, num_steps, mode, ...)`: Collect trajectory using Python loop
+- `learn_from_trajectory(learner, observations, targets)`: Learn from trajectory using scan
+- `learn_from_trajectory_normalized(learner, observations, targets)`: With normalization
+- `make_gymnasium_stream(env_id, mode, ...)`: Create stream from env ID (for Python loops)
 - `make_random_policy(env, seed)`: Create random action policy
 - `make_epsilon_greedy_policy(base, env, epsilon, seed)`: Wrap policy with exploration
 
-### Example Usage
+### Example Usage (Trajectory Collection - Recommended)
 ```python
-from alberta_framework import LinearLearner, IDBD, run_learning_loop
-from alberta_framework.streams.gymnasium import make_gymnasium_stream, PredictionMode
+import jax.random as jr
+from alberta_framework import LinearLearner, IDBD, metrics_to_dicts
+from alberta_framework.streams.gymnasium import (
+    collect_trajectory, learn_from_trajectory, PredictionMode, make_random_policy
+)
+import gymnasium as gym
 
-# Create stream from CartPole
-stream = make_gymnasium_stream(
-    "CartPole-v1",
-    mode=PredictionMode.REWARD,
-    include_action_in_features=True,
+# Create environment and policy
+env = gym.make("CartPole-v1")
+policy = make_random_policy(env, seed=42)
+
+# Collect trajectory (Python loop for env interaction)
+observations, targets = collect_trajectory(
+    env, policy, num_steps=10000, mode=PredictionMode.REWARD
 )
 
-# Use with existing learners
+# Learn from trajectory (JIT-compiled scan)
 learner = LinearLearner(optimizer=IDBD())
-state, metrics = run_learning_loop(learner, stream, num_steps=10000)
+state, metrics = learn_from_trajectory(learner, observations, targets)
+metrics_list = metrics_to_dicts(metrics)
 ```
 
 ## Publication-Quality Analysis

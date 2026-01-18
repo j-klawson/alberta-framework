@@ -18,12 +18,16 @@ This will:
 
 from pathlib import Path
 
+import jax.random as jr
+
 from alberta_framework import (
     Autostep,
     IDBD,
     LMS,
     LinearLearner,
-    RandomWalkTarget,
+    RandomWalkStream,
+    metrics_to_dicts,
+    run_learning_loop,
 )
 from alberta_framework.utils import (
     ExperimentConfig,
@@ -38,22 +42,22 @@ from alberta_framework.utils import (
 
 def create_configs() -> list[ExperimentConfig]:
     """Create experiment configurations for LMS, IDBD, and Autostep."""
+
+    def make_stream():
+        return RandomWalkStream(feature_dim=10, drift_rate=0.001, noise_std=0.1)
+
     configs = [
         # LMS with various step-sizes
         ExperimentConfig(
             name="LMS_0.01",
             learner_factory=lambda: LinearLearner(optimizer=LMS(step_size=0.01)),
-            stream_factory=lambda seed: RandomWalkTarget(
-                feature_dim=10, drift_rate=0.001, noise_std=0.1, seed=seed
-            ),
+            stream_factory=make_stream,
             num_steps=10000,
         ),
         ExperimentConfig(
             name="LMS_0.05",
             learner_factory=lambda: LinearLearner(optimizer=LMS(step_size=0.05)),
-            stream_factory=lambda seed: RandomWalkTarget(
-                feature_dim=10, drift_rate=0.001, noise_std=0.1, seed=seed
-            ),
+            stream_factory=make_stream,
             num_steps=10000,
         ),
         # IDBD with default parameters
@@ -62,9 +66,7 @@ def create_configs() -> list[ExperimentConfig]:
             learner_factory=lambda: LinearLearner(
                 optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.05)
             ),
-            stream_factory=lambda seed: RandomWalkTarget(
-                feature_dim=10, drift_rate=0.001, noise_std=0.1, seed=seed
-            ),
+            stream_factory=make_stream,
             num_steps=10000,
         ),
         # Autostep
@@ -73,9 +75,7 @@ def create_configs() -> list[ExperimentConfig]:
             learner_factory=lambda: LinearLearner(
                 optimizer=Autostep(initial_step_size=0.01, meta_step_size=0.05)
             ),
-            stream_factory=lambda seed: RandomWalkTarget(
-                feature_dim=10, drift_rate=0.001, noise_std=0.1, seed=seed
-            ),
+            stream_factory=make_stream,
             num_steps=10000,
         ),
     ]

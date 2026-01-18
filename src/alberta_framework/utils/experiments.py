@@ -7,6 +7,7 @@ with optional parallelization and aggregation of results.
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
+import jax.random as jr
 import numpy as np
 from numpy.typing import NDArray
 
@@ -14,11 +15,12 @@ from alberta_framework.core.learners import (
     LinearLearner,
     NormalizedLearnerState,
     NormalizedLinearLearner,
+    metrics_to_dicts,
     run_learning_loop,
     run_normalized_learning_loop,
 )
 from alberta_framework.core.types import LearnerState
-from alberta_framework.streams.base import ExperienceStream
+from alberta_framework.streams.base import ScanStream
 
 
 class ExperimentConfig(NamedTuple):
@@ -27,13 +29,13 @@ class ExperimentConfig(NamedTuple):
     Attributes:
         name: Human-readable name for this configuration
         learner_factory: Callable that returns a fresh learner instance
-        stream_factory: Callable(seed) that returns a fresh stream instance
+        stream_factory: Callable that returns a fresh stream instance
         num_steps: Number of learning steps to run
     """
 
     name: str
     learner_factory: Callable[[], LinearLearner | NormalizedLinearLearner]
-    stream_factory: Callable[[int], ExperienceStream]
+    stream_factory: Callable[[], ScanStream]
     num_steps: int
 
 
@@ -103,15 +105,18 @@ def run_single_experiment(
         SingleRunResult with metrics and final state
     """
     learner = config.learner_factory()
-    stream = config.stream_factory(seed)
+    stream = config.stream_factory()
+    key = jr.key(seed)
 
     final_state: LearnerState | NormalizedLearnerState
     if isinstance(learner, NormalizedLinearLearner):
-        final_state, metrics_history = run_normalized_learning_loop(
-            learner, stream, config.num_steps
+        final_state, metrics = run_normalized_learning_loop(
+            learner, stream, config.num_steps, key
         )
+        metrics_history = metrics_to_dicts(metrics, normalized=True)
     else:
-        final_state, metrics_history = run_learning_loop(learner, stream, config.num_steps)
+        final_state, metrics = run_learning_loop(learner, stream, config.num_steps, key)
+        metrics_history = metrics_to_dicts(metrics)
 
     return SingleRunResult(
         config_name=config.name,

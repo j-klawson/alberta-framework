@@ -3,9 +3,11 @@
 These streams generate non-stationary supervised learning problems where
 the target function changes over time, testing the learner's ability to
 track and adapt.
+
+All streams use JAX-compatible pure functions that work with jax.lax.scan.
 """
 
-from collections.abc import Iterator
+from typing import NamedTuple
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,7 +16,19 @@ from jax import Array
 from alberta_framework.core.types import TimeStep
 
 
-class RandomWalkTarget:
+class RandomWalkState(NamedTuple):
+    """State for RandomWalkStream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        true_weights: Current true target weights
+    """
+
+    key: Array
+    true_weights: Array
+
+
+class RandomWalkStream:
     """Non-stationary stream where target weights drift via random walk.
 
     The true target function is linear: y* = w_true @ x + noise
@@ -35,7 +49,6 @@ class RandomWalkTarget:
         drift_rate: float = 0.001,
         noise_std: float = 0.1,
         feature_std: float = 1.0,
-        seed: int = 0,
     ):
         """Initialize the random walk target stream.
 
@@ -44,57 +57,73 @@ class RandomWalkTarget:
             drift_rate: Std dev of weight changes per step (controls non-stationarity)
             noise_std: Std dev of target noise
             feature_std: Std dev of feature values
-            seed: Random seed for reproducibility
         """
         self._feature_dim = feature_dim
         self._drift_rate = drift_rate
         self._noise_std = noise_std
         self._feature_std = feature_std
-        self._key = jr.key(seed)
-        self._true_weights: Array | None = None
 
     @property
     def feature_dim(self) -> int:
         """Return the dimension of observation vectors."""
         return self._feature_dim
 
-    @property
-    def true_weights(self) -> Array | None:
-        """Return current true weights (for debugging/visualization)."""
-        return self._true_weights
+    def init(self, key: Array) -> RandomWalkState:
+        """Initialize stream state.
 
-    def __iter__(self) -> Iterator[TimeStep]:
-        """Return self as iterator."""
-        return self
-
-    def __next__(self) -> TimeStep:
-        """Generate the next time step.
+        Args:
+            key: JAX random key
 
         Returns:
-            TimeStep with observation and target
+            Initial stream state with random weights
         """
-        # Split keys for different random operations
-        self._key, key_init, key_drift, key_x, key_noise = jr.split(self._key, 5)
+        key, subkey = jr.split(key)
+        weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
+        return RandomWalkState(key=key, true_weights=weights)
 
-        # Initialize weights if first step
-        if self._true_weights is None:
-            self._true_weights = jr.normal(key_init, (self._feature_dim,), dtype=jnp.float32)
-        else:
-            # Random walk update to weights
-            drift = jr.normal(key_drift, (self._feature_dim,), dtype=jnp.float32)
-            self._true_weights = self._true_weights + self._drift_rate * drift
+    def step(self, state: RandomWalkState, idx: Array) -> tuple[TimeStep, RandomWalkState]:
+        """Generate one time step.
 
-        # Generate observation
-        x = self._feature_std * jr.normal(key_x, (self._feature_dim,), dtype=jnp.float32)
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
 
-        # Compute target with noise
-        noise = self._noise_std * jr.normal(key_noise, (), dtype=jnp.float32)
-        y_star = jnp.dot(self._true_weights, x) + noise
+        Returns:
+            Tuple of (timestep, new_state)
+        """
+        del idx  # unused
+        key, k_drift, k_x, k_noise = jr.split(state.key, 4)
 
-        return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
+        # Drift weights
+        drift = jr.normal(k_drift, state.true_weights.shape, dtype=jnp.float32)
+        new_weights = state.true_weights + self._drift_rate * drift
+
+        # Generate observation and target
+        x = self._feature_std * jr.normal(k_x, (self._feature_dim,), dtype=jnp.float32)
+        noise = self._noise_std * jr.normal(k_noise, (), dtype=jnp.float32)
+        target = jnp.dot(new_weights, x) + noise
+
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = RandomWalkState(key=key, true_weights=new_weights)
+
+        return timestep, new_state
 
 
-class AbruptChangeTarget:
+class AbruptChangeState(NamedTuple):
+    """State for AbruptChangeStream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        true_weights: Current true target weights
+        step_count: Number of steps taken
+    """
+
+    key: Array
+    true_weights: Array
+    step_count: Array
+
+
+class AbruptChangeStream:
     """Non-stationary stream with sudden target weight changes.
 
     Target weights remain constant for a period, then abruptly change
@@ -105,6 +134,7 @@ class AbruptChangeTarget:
         feature_dim: Dimension of observation vectors
         change_interval: Number of steps between weight changes
         noise_std: Standard deviation of observation noise
+        feature_std: Standard deviation of features
     """
 
     def __init__(
@@ -113,7 +143,6 @@ class AbruptChangeTarget:
         change_interval: int = 1000,
         noise_std: float = 0.1,
         feature_std: float = 1.0,
-        seed: int = 0,
     ):
         """Initialize the abrupt change stream.
 
@@ -122,48 +151,85 @@ class AbruptChangeTarget:
             change_interval: Steps between abrupt weight changes
             noise_std: Std dev of target noise
             feature_std: Std dev of feature values
-            seed: Random seed
         """
         self._feature_dim = feature_dim
         self._change_interval = change_interval
         self._noise_std = noise_std
         self._feature_std = feature_std
-        self._key = jr.key(seed)
-        self._true_weights: Array | None = None
-        self._step_count = 0
 
     @property
     def feature_dim(self) -> int:
         """Return the dimension of observation vectors."""
         return self._feature_dim
 
-    @property
-    def true_weights(self) -> Array | None:
-        """Return current true weights."""
-        return self._true_weights
+    def init(self, key: Array) -> AbruptChangeState:
+        """Initialize stream state.
 
-    def __iter__(self) -> Iterator[TimeStep]:
-        """Return self as iterator."""
-        return self
+        Args:
+            key: JAX random key
 
-    def __next__(self) -> TimeStep:
-        """Generate the next time step."""
-        self._key, key_weights, key_x, key_noise = jr.split(self._key, 4)
+        Returns:
+            Initial stream state
+        """
+        key, subkey = jr.split(key)
+        weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
+        return AbruptChangeState(
+            key=key,
+            true_weights=weights,
+            step_count=jnp.array(0, dtype=jnp.int32),
+        )
 
-        # Initialize or change weights at intervals
-        if self._true_weights is None or self._step_count % self._change_interval == 0:
-            self._true_weights = jr.normal(key_weights, (self._feature_dim,), dtype=jnp.float32)
+    def step(self, state: AbruptChangeState, idx: Array) -> tuple[TimeStep, AbruptChangeState]:
+        """Generate one time step.
 
-        self._step_count += 1
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
+
+        Returns:
+            Tuple of (timestep, new_state)
+        """
+        del idx  # unused
+        key, key_weights, key_x, key_noise = jr.split(state.key, 4)
+
+        # Determine if we should change weights
+        should_change = state.step_count % self._change_interval == 0
+
+        # Generate new weights (always generated but only used if should_change)
+        new_random_weights = jr.normal(key_weights, (self._feature_dim,), dtype=jnp.float32)
+
+        # Use jnp.where to conditionally update weights (JIT-compatible)
+        new_weights = jnp.where(should_change, new_random_weights, state.true_weights)
 
         # Generate observation
         x = self._feature_std * jr.normal(key_x, (self._feature_dim,), dtype=jnp.float32)
 
         # Compute target
         noise = self._noise_std * jr.normal(key_noise, (), dtype=jnp.float32)
-        y_star = jnp.dot(self._true_weights, x) + noise
+        target = jnp.dot(new_weights, x) + noise
 
-        return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = AbruptChangeState(
+            key=key,
+            true_weights=new_weights,
+            step_count=state.step_count + 1,
+        )
+
+        return timestep, new_state
+
+
+class SuttonExperiment1State(NamedTuple):
+    """State for SuttonExperiment1Stream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        signs: Signs (+1/-1) for the relevant inputs
+        step_count: Number of steps taken
+    """
+
+    key: Array
+    signs: Array
+    step_count: Array
 
 
 class SuttonExperiment1Stream:
@@ -189,7 +255,6 @@ class SuttonExperiment1Stream:
         num_relevant: int = 5,
         num_irrelevant: int = 15,
         change_interval: int = 20,
-        seed: int = 0,
     ):
         """Initialize the Sutton Experiment 1 stream.
 
@@ -197,73 +262,99 @@ class SuttonExperiment1Stream:
             num_relevant: Number of relevant inputs with ±1 weights
             num_irrelevant: Number of irrelevant inputs with 0 weights
             change_interval: Number of steps between sign flips
-            seed: Random seed for reproducibility
         """
         self._num_relevant = num_relevant
         self._num_irrelevant = num_irrelevant
         self._change_interval = change_interval
-        self._key = jr.key(seed)
-        self._step_count = 0
-
-        # Initialize signs for relevant inputs (all +1 initially)
-        self._signs: Array | None = None
 
     @property
     def feature_dim(self) -> int:
         """Return the dimension of observation vectors."""
         return self._num_relevant + self._num_irrelevant
 
-    @property
-    def true_weights(self) -> Array | None:
-        """Return current true weights (signs for relevant, zeros for irrelevant)."""
-        if self._signs is None:
-            return None
-        zeros = jnp.zeros(self._num_irrelevant, dtype=jnp.float32)
-        return jnp.concatenate([self._signs, zeros])
+    def init(self, key: Array) -> SuttonExperiment1State:
+        """Initialize stream state.
 
-    def __iter__(self) -> Iterator[TimeStep]:
-        """Return self as iterator."""
-        return self
+        Args:
+            key: JAX random key
 
-    def __next__(self) -> TimeStep:
-        """Generate the next time step.
+        Returns:
+            Initial stream state with all +1 signs
+        """
+        signs = jnp.ones(self._num_relevant, dtype=jnp.float32)
+        return SuttonExperiment1State(
+            key=key,
+            signs=signs,
+            step_count=jnp.array(0, dtype=jnp.int32),
+        )
+
+    def step(
+        self, state: SuttonExperiment1State, idx: Array
+    ) -> tuple[TimeStep, SuttonExperiment1State]:
+        """Generate one time step.
 
         At each step:
-        1. If at a change interval, flip one random sign
+        1. If at a change interval (and not step 0), flip one random sign
         2. Generate random inputs from N(0, 1)
         3. Compute target as sum of relevant inputs weighted by signs
 
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
+
         Returns:
-            TimeStep with observation and target
+            Tuple of (timestep, new_state)
         """
-        self._key, key_x, key_which = jr.split(self._key, 3)
+        del idx  # unused
+        key, key_x, key_which = jr.split(state.key, 3)
 
-        # Initialize signs if first step
-        if self._signs is None:
-            self._signs = jnp.ones(self._num_relevant, dtype=jnp.float32)
+        # Determine if we should flip a sign (not at step 0)
+        should_flip = (state.step_count > 0) & (state.step_count % self._change_interval == 0)
 
-        # Flip one random sign at change intervals (but not at step 0)
-        if self._step_count > 0 and self._step_count % self._change_interval == 0:
-            # Select which sign to flip (0 to num_relevant-1)
-            idx_to_flip = jr.randint(key_which, (), 0, self._num_relevant)
-            # Flip the sign: multiply by -1 at the selected index
-            flip_mask = jnp.ones(self._num_relevant, dtype=jnp.float32)
-            flip_mask = flip_mask.at[idx_to_flip].set(-1.0)
-            self._signs = self._signs * flip_mask
+        # Select which sign to flip
+        idx_to_flip = jr.randint(key_which, (), 0, self._num_relevant)
 
-        self._step_count += 1
+        # Create flip mask
+        flip_mask = jnp.where(
+            jnp.arange(self._num_relevant) == idx_to_flip,
+            jnp.array(-1.0, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+        )
+
+        # Apply flip mask conditionally
+        new_signs = jnp.where(should_flip, state.signs * flip_mask, state.signs)
 
         # Generate observation from N(0, 1)
         x = jr.normal(key_x, (self.feature_dim,), dtype=jnp.float32)
 
         # Compute target: sum of first num_relevant inputs weighted by signs
-        # y* = s1*x1 + s2*x2 + ... + s_k*x_k (no noise)
-        y_star = jnp.dot(self._signs, x[: self._num_relevant])
+        target = jnp.dot(new_signs, x[: self._num_relevant])
 
-        return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = SuttonExperiment1State(
+            key=key,
+            signs=new_signs,
+            step_count=state.step_count + 1,
+        )
+
+        return timestep, new_state
 
 
-class CyclicTarget:
+class CyclicState(NamedTuple):
+    """State for CyclicStream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        configurations: Pre-generated weight configurations
+        step_count: Number of steps taken
+    """
+
+    key: Array
+    configurations: Array
+    step_count: Array
+
+
+class CyclicStream:
     """Non-stationary stream that cycles between known weight configurations.
 
     Weights cycle through a fixed set of configurations. Tests whether
@@ -273,6 +364,8 @@ class CyclicTarget:
         feature_dim: Dimension of observation vectors
         cycle_length: Number of steps per configuration before switching
         num_configurations: Number of weight configurations to cycle through
+        noise_std: Standard deviation of observation noise
+        feature_std: Standard deviation of features
     """
 
     def __init__(
@@ -282,7 +375,6 @@ class CyclicTarget:
         num_configurations: int = 4,
         noise_std: float = 0.1,
         feature_std: float = 1.0,
-        seed: int = 0,
     ):
         """Initialize the cyclic target stream.
 
@@ -292,57 +384,74 @@ class CyclicTarget:
             num_configurations: Number of configurations to cycle through
             noise_std: Std dev of target noise
             feature_std: Std dev of feature values
-            seed: Random seed
         """
         self._feature_dim = feature_dim
         self._cycle_length = cycle_length
         self._num_configurations = num_configurations
         self._noise_std = noise_std
         self._feature_std = feature_std
-        self._key = jr.key(seed)
-        self._step_count = 0
-
-        # Pre-generate all weight configurations
-        key_configs, self._key = jr.split(self._key)
-        self._configurations = jr.normal(
-            key_configs, (num_configurations, feature_dim), dtype=jnp.float32
-        )
 
     @property
     def feature_dim(self) -> int:
         """Return the dimension of observation vectors."""
         return self._feature_dim
 
-    @property
-    def true_weights(self) -> Array:
-        """Return current true weights."""
-        config_idx = (self._step_count // self._cycle_length) % self._num_configurations
-        return self._configurations[config_idx]
+    def init(self, key: Array) -> CyclicState:
+        """Initialize stream state.
 
-    @property
-    def current_configuration_index(self) -> int:
-        """Return the index of the current weight configuration."""
-        return (self._step_count // self._cycle_length) % self._num_configurations
+        Args:
+            key: JAX random key
 
-    def __iter__(self) -> Iterator[TimeStep]:
-        """Return self as iterator."""
-        return self
+        Returns:
+            Initial stream state with pre-generated configurations
+        """
+        key, key_configs = jr.split(key)
+        configurations = jr.normal(
+            key_configs,
+            (self._num_configurations, self._feature_dim),
+            dtype=jnp.float32,
+        )
+        return CyclicState(
+            key=key,
+            configurations=configurations,
+            step_count=jnp.array(0, dtype=jnp.int32),
+        )
 
-    def __next__(self) -> TimeStep:
-        """Generate the next time step."""
-        self._key, key_x, key_noise = jr.split(self._key, 3)
+    def step(self, state: CyclicState, idx: Array) -> tuple[TimeStep, CyclicState]:
+        """Generate one time step.
 
-        # Get current configuration
-        config_idx = (self._step_count // self._cycle_length) % self._num_configurations
-        true_weights = self._configurations[config_idx]
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
 
-        self._step_count += 1
+        Returns:
+            Tuple of (timestep, new_state)
+        """
+        del idx  # unused
+        key, key_x, key_noise = jr.split(state.key, 3)
+
+        # Get current configuration index
+        config_idx = (state.step_count // self._cycle_length) % self._num_configurations
+        true_weights = state.configurations[config_idx]
 
         # Generate observation
         x = self._feature_std * jr.normal(key_x, (self._feature_dim,), dtype=jnp.float32)
 
         # Compute target
         noise = self._noise_std * jr.normal(key_noise, (), dtype=jnp.float32)
-        y_star = jnp.dot(true_weights, x) + noise
+        target = jnp.dot(true_weights, x) + noise
 
-        return TimeStep(observation=x, target=jnp.atleast_1d(y_star))
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = CyclicState(
+            key=key,
+            configurations=state.configurations,
+            step_count=state.step_count + 1,
+        )
+
+        return timestep, new_state
+
+
+# Backward-compatible aliases
+RandomWalkTarget = RandomWalkStream
+AbruptChangeTarget = AbruptChangeStream
+CyclicTarget = CyclicStream

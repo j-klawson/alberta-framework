@@ -13,22 +13,33 @@ Usage:
     python examples/step1_normalization_study.py
 """
 
+from typing import NamedTuple
+
+import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
+from jax import Array
 
 from alberta_framework import (
     IDBD,
     LinearLearner,
     NormalizedLinearLearner,
     compare_learners,
+    metrics_to_dicts,
     run_learning_loop,
     run_normalized_learning_loop,
 )
 from alberta_framework.core.types import TimeStep
-import jax.numpy as jnp
-import jax.random as jr
 
 
-class ScaledRandomWalkTarget:
+class ScaledRandomWalkState(NamedTuple):
+    """State for ScaledRandomWalkStream."""
+
+    key: Array
+    true_weights: Array
+
+
+class ScaledRandomWalkStream:
     """Random walk target with scaled features.
 
     Some features have much larger magnitudes than others,
@@ -41,44 +52,50 @@ class ScaledRandomWalkTarget:
         drift_rate: float = 0.001,
         noise_std: float = 0.1,
         feature_scales: np.ndarray | None = None,
-        seed: int = 42,
     ):
         self._feature_dim = feature_dim
         self._drift_rate = drift_rate
         self._noise_std = noise_std
-        self._rng = np.random.default_rng(seed)
 
         # Default: exponentially varying scales
         if feature_scales is None:
-            self._scales = 10.0 ** np.linspace(-2, 2, feature_dim)
+            self._scales = jnp.array(10.0 ** np.linspace(-2, 2, feature_dim), dtype=jnp.float32)
         else:
-            self._scales = feature_scales
-
-        # Initialize target weights
-        self._target_weights = self._rng.standard_normal(feature_dim)
+            self._scales = jnp.array(feature_scales, dtype=jnp.float32)
 
     @property
     def feature_dim(self) -> int:
         return self._feature_dim
 
-    def __iter__(self):
-        return self
+    def init(self, key: Array) -> ScaledRandomWalkState:
+        """Initialize stream state."""
+        key, subkey = jr.split(key)
+        weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
+        return ScaledRandomWalkState(key=key, true_weights=weights)
 
-    def __next__(self) -> TimeStep:
-        # Generate observation with scaled features
-        raw_obs = self._rng.standard_normal(self._feature_dim)
-        observation = jnp.array(raw_obs * self._scales, dtype=jnp.float32)
+    def step(self, state: ScaledRandomWalkState, idx: Array) -> tuple[TimeStep, ScaledRandomWalkState]:
+        """Generate one time step."""
+        del idx  # unused
+        key, k_drift, k_x, k_noise = jr.split(state.key, 4)
 
-        # Compute target from current weights
-        target = jnp.dot(self._target_weights, raw_obs)
-        target += self._rng.normal(0, self._noise_std)
-        target = jnp.array([target], dtype=jnp.float32)
+        # Generate raw observation
+        raw_obs = jr.normal(k_x, (self._feature_dim,), dtype=jnp.float32)
+
+        # Apply scales to observation
+        observation = raw_obs * self._scales
+
+        # Compute target from current weights (using raw, unscaled observation)
+        noise = self._noise_std * jr.normal(k_noise, (), dtype=jnp.float32)
+        target = jnp.dot(state.true_weights, raw_obs) + noise
 
         # Drift target weights
-        drift = self._rng.standard_normal(self._feature_dim) * self._drift_rate
-        self._target_weights += drift
+        drift = jr.normal(k_drift, state.true_weights.shape, dtype=jnp.float32) * self._drift_rate
+        new_weights = state.true_weights + drift
 
-        return TimeStep(observation=observation, target=target)
+        timestep = TimeStep(observation=observation, target=jnp.atleast_1d(target))
+        new_state = ScaledRandomWalkState(key=key, true_weights=new_weights)
+
+        return timestep, new_state
 
 
 def run_normalization_experiment(
@@ -105,25 +122,26 @@ def run_normalization_experiment(
     ]
 
     for name, use_normalization in configs:
-        stream = ScaledRandomWalkTarget(
+        stream = ScaledRandomWalkStream(
             feature_dim=feature_dim,
             drift_rate=0.001,
             noise_std=0.1,
-            seed=seed,
         )
+
+        key = jr.key(seed)
 
         if use_normalization:
             learner = NormalizedLinearLearner(
                 optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
             )
-            _, metrics = run_normalized_learning_loop(learner, stream, num_steps)
+            _, metrics = run_normalized_learning_loop(learner, stream, num_steps, key)
+            results[name] = metrics_to_dicts(metrics, normalized=True)
         else:
             learner = LinearLearner(
                 optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
             )
-            _, metrics = run_learning_loop(learner, stream, num_steps)
-
-        results[name] = metrics
+            _, metrics = run_learning_loop(learner, stream, num_steps, key)
+            results[name] = metrics_to_dicts(metrics)
 
     return results
 
@@ -187,26 +205,28 @@ def run_scale_sensitivity_study(
         scales = np.logspace(np.log10(scale_min), np.log10(scale_max), feature_dim)
 
         # Without normalization
-        stream = ScaledRandomWalkTarget(
+        stream = ScaledRandomWalkStream(
             feature_dim=feature_dim,
             feature_scales=scales,
-            seed=seed,
         )
         learner = LinearLearner(
             optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
         )
-        _, metrics_no_norm = run_learning_loop(learner, stream, num_steps)
+        key = jr.key(seed)
+        _, metrics_no_norm = run_learning_loop(learner, stream, num_steps, key)
+        metrics_no_norm = metrics_to_dicts(metrics_no_norm)
 
         # With normalization
-        stream = ScaledRandomWalkTarget(
+        stream = ScaledRandomWalkStream(
             feature_dim=feature_dim,
             feature_scales=scales,
-            seed=seed,
         )
         learner = NormalizedLinearLearner(
             optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
         )
-        _, metrics_norm = run_normalized_learning_loop(learner, stream, num_steps)
+        key = jr.key(seed)
+        _, metrics_norm = run_normalized_learning_loop(learner, stream, num_steps, key)
+        metrics_norm = metrics_to_dicts(metrics_norm, normalized=True)
 
         no_norm_error = sum(m["squared_error"] for m in metrics_no_norm)
         norm_error = sum(m["squared_error"] for m in metrics_norm)
