@@ -5,7 +5,7 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
-from typing import NamedTuple, TypeVar
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -26,10 +26,6 @@ from alberta_framework.streams.base import ScanStream
 
 # Type alias for any optimizer type
 AnyOptimizer = Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
-
-# Type variable for stream state
-StreamStateT = TypeVar("StreamStateT")
-
 
 class UpdateResult(NamedTuple):
     """Result of a learner update step.
@@ -160,7 +156,7 @@ class LinearLearner:
         )
 
 
-def run_learning_loop(
+def run_learning_loop[StreamStateT](
     learner: LinearLearner,
     stream: ScanStream[StreamStateT],
     num_steps: int,
@@ -348,7 +344,7 @@ class NormalizedLinearLearner:
         )
 
 
-def run_normalized_learning_loop(
+def run_normalized_learning_loop[StreamStateT](
     learner: NormalizedLinearLearner,
     stream: ScanStream[StreamStateT],
     num_steps: int,
