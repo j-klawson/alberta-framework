@@ -302,6 +302,129 @@ from alberta_framework import (
 )
 ```
 
+## Publication-Quality Analysis
+
+The framework includes tools for running rigorous multi-seed experiments with statistical analysis and publication-ready outputs.
+
+### Installation
+
+```bash
+pip install -e ".[analysis]"  # Adds matplotlib, scipy, joblib, tqdm
+```
+
+### Multi-Seed Experiments
+
+Run experiments across multiple seeds with optional parallelization:
+
+```python
+from alberta_framework import IDBD, LMS, LinearLearner, RandomWalkTarget
+from alberta_framework.utils import (
+    ExperimentConfig,
+    run_multi_seed_experiment,
+    pairwise_comparisons,
+)
+
+configs = [
+    ExperimentConfig(
+        name="LMS",
+        learner_factory=lambda: LinearLearner(optimizer=LMS(0.01)),
+        stream_factory=lambda seed: RandomWalkTarget(feature_dim=10, seed=seed),
+        num_steps=10000,
+    ),
+    ExperimentConfig(
+        name="IDBD",
+        learner_factory=lambda: LinearLearner(optimizer=IDBD()),
+        stream_factory=lambda seed: RandomWalkTarget(feature_dim=10, seed=seed),
+        num_steps=10000,
+    ),
+]
+
+# Run across 30 seeds with parallel execution
+results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
+
+# Statistical comparison with multiple comparison correction
+significance = pairwise_comparisons(results, test="ttest", correction="bonferroni")
+```
+
+### Publication Figures
+
+Generate publication-quality figures:
+
+```python
+from alberta_framework.utils import (
+    set_publication_style,
+    plot_learning_curves,
+    create_comparison_figure,
+    save_figure,
+)
+
+set_publication_style(font_size=10, use_latex=False)
+
+# Learning curves with confidence intervals
+fig, ax = plot_learning_curves(results, show_ci=True, log_scale=True)
+save_figure(fig, "learning_curves", formats=["pdf", "png"])
+
+# Multi-panel comparison figure
+fig = create_comparison_figure(results, significance_results=significance)
+save_figure(fig, "comparison", formats=["pdf", "png"])
+```
+
+### Export Results
+
+Export results for papers and reports:
+
+```python
+from alberta_framework.utils import (
+    generate_latex_table,
+    generate_markdown_table,
+    export_to_csv,
+    export_to_json,
+    save_experiment_report,
+)
+
+# Generate LaTeX table with significance markers
+latex = generate_latex_table(
+    results,
+    significance_results=significance,
+    caption="Comparison of LMS and IDBD",
+    label="tab:comparison",
+)
+
+# Save complete report (CSV, JSON, LaTeX, Markdown)
+artifacts = save_experiment_report(results, "output/", "my_experiment")
+```
+
+### Statistical Functions
+
+Available statistical tests and utilities:
+
+```python
+from alberta_framework.utils import (
+    compute_statistics,           # Mean, std, SEM, CI, median, IQR
+    compute_timeseries_statistics,  # Statistics over time
+    ttest_comparison,             # Paired/independent t-test
+    mann_whitney_comparison,      # Non-parametric test
+    wilcoxon_comparison,          # Paired non-parametric test
+    bonferroni_correction,        # Multiple comparison correction
+    holm_correction,              # Holm-Bonferroni correction
+    bootstrap_ci,                 # Bootstrap confidence intervals
+    cohens_d,                     # Effect size
+)
+```
+
+### Running the Example
+
+```bash
+pip install -e ".[analysis]"
+python examples/publication_experiment.py
+```
+
+This generates:
+- Learning curve figures (PDF + PNG)
+- Multi-panel comparison figures
+- LaTeX and Markdown tables
+- CSV and JSON result files
+
 ## Design Principles
 
 1. **Immutable State**: All state is immutable (NamedTuples), making it JAX-friendly and easy to reason about.

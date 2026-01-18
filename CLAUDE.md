@@ -23,7 +23,11 @@ src/alberta_framework/
 │   ├── synthetic.py    # RandomWalkTarget, AbruptChangeTarget, CyclicTarget
 │   └── gymnasium.py    # GymnasiumStream, TDStream, PredictionMode (optional)
 └── utils/
-    └── metrics.py      # compute_tracking_error, compare_learners, etc.
+    ├── metrics.py      # compute_tracking_error, compare_learners, etc.
+    ├── experiments.py  # ExperimentConfig, run_multi_seed_experiment, AggregatedResults
+    ├── statistics.py   # Statistical tests, CI, effect sizes (requires scipy)
+    ├── visualization.py # Publication plots (requires matplotlib)
+    └── export.py       # CSV, JSON, LaTeX, Markdown export
 ```
 
 ### Key Commands
@@ -33,6 +37,9 @@ pip install -e ".[dev]"
 
 # Install with Gymnasium support
 pip install -e ".[gymnasium]"
+
+# Install with analysis tools (matplotlib, scipy, joblib, tqdm)
+pip install -e ".[analysis]"
 
 # Run tests
 pytest tests/ -v
@@ -44,6 +51,9 @@ python examples/step1_autostep_comparison.py
 
 # Run Gymnasium examples (requires gymnasium)
 python examples/gymnasium_reward_prediction.py
+
+# Run publication-quality experiment (requires analysis)
+python examples/publication_experiment.py
 ```
 
 ## Development Guidelines
@@ -136,6 +146,40 @@ stream = make_gymnasium_stream(
 learner = LinearLearner(optimizer=IDBD())
 state, metrics = run_learning_loop(learner, stream, num_steps=10000)
 ```
+
+## Publication-Quality Analysis
+
+The `utils` module provides tools for rigorous multi-seed experiments:
+
+### Key Classes
+- `ExperimentConfig`: Define experiments with learner/stream factories
+- `AggregatedResults`: Results aggregated across seeds with summary statistics
+- `SignificanceResult`: Statistical test results with effect sizes
+
+### Multi-Seed Experiments
+```python
+from alberta_framework.utils import ExperimentConfig, run_multi_seed_experiment
+
+configs = [ExperimentConfig(name="IDBD", learner_factory=..., stream_factory=..., num_steps=10000)]
+results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
+```
+
+### Statistical Analysis (requires scipy)
+- `pairwise_comparisons()`: All pairwise tests with Bonferroni/Holm correction
+- `ttest_comparison()`, `mann_whitney_comparison()`, `wilcoxon_comparison()`
+- `compute_statistics()`, `bootstrap_ci()`, `cohens_d()`
+
+### Visualization (requires matplotlib)
+- `set_publication_style()`: Configure for academic papers
+- `plot_learning_curves()`: Learning curves with confidence intervals
+- `plot_final_performance_bars()`: Bar charts with significance markers
+- `create_comparison_figure()`: Multi-panel comparison figure
+- `save_figure()`: Export to PDF/PNG
+
+### Export
+- `generate_latex_table()`, `generate_markdown_table()`
+- `export_to_csv()`, `export_to_json()`
+- `save_experiment_report()`: Save all artifacts at once
 
 ## Future Work (Out of Scope for v0.1.0)
 - Step 2: Feature generation/testing
