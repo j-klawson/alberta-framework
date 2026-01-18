@@ -21,13 +21,13 @@ class NormalizerState(NamedTuple):
     Attributes:
         mean: Running mean estimate per feature
         var: Running variance estimate per feature
-        count: Number of samples seen
+        sample_count: Number of samples seen
         decay: Exponential decay factor for estimates (1.0 = no decay, pure online)
     """
 
     mean: Array  # Shape: (feature_dim,)
     var: Array  # Shape: (feature_dim,)
-    count: Array  # Scalar
+    sample_count: Array  # Scalar
     decay: Array  # Scalar
 
 
@@ -74,7 +74,7 @@ class OnlineNormalizer:
         return NormalizerState(
             mean=jnp.zeros(feature_dim, dtype=jnp.float32),
             var=jnp.ones(feature_dim, dtype=jnp.float32),
-            count=jnp.array(0.0, dtype=jnp.float32),
+            sample_count=jnp.array(0.0, dtype=jnp.float32),
             decay=jnp.array(self._decay, dtype=jnp.float32),
         )
 
@@ -96,7 +96,7 @@ class OnlineNormalizer:
             Tuple of (normalized_observation, new_state)
         """
         # Update count
-        new_count = state.count + 1.0
+        new_count = state.sample_count + 1.0
 
         # Compute effective decay (ramp up from 0 to target decay)
         # This prevents instability in early steps
@@ -124,7 +124,7 @@ class OnlineNormalizer:
         new_state = NormalizerState(
             mean=new_mean,
             var=new_var,
-            count=new_count,
+            sample_count=new_count,
             decay=state.decay,
         )
 
@@ -187,6 +187,6 @@ def create_normalizer_state(
     return NormalizerState(
         mean=jnp.zeros(feature_dim, dtype=jnp.float32),
         var=jnp.ones(feature_dim, dtype=jnp.float32),
-        count=jnp.array(0.0, dtype=jnp.float32),
+        sample_count=jnp.array(0.0, dtype=jnp.float32),
         decay=jnp.array(decay, dtype=jnp.float32),
     )

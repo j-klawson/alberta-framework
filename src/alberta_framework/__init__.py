@@ -28,6 +28,24 @@ Reference: The Alberta Plan for AI Research (Sutton et al.)
 __version__ = "0.1.0"
 
 # Core types
+# Learners
+from alberta_framework.core.learners import (
+    LinearLearner,
+    NormalizedLearnerState,
+    NormalizedLinearLearner,
+    run_learning_loop,
+    run_normalized_learning_loop,
+)
+
+# Normalizers
+from alberta_framework.core.normalizers import (
+    NormalizerState,
+    OnlineNormalizer,
+    create_normalizer_state,
+)
+
+# Optimizers
+from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
 from alberta_framework.core.types import (
     AutostepState,
     IDBDState,
@@ -37,25 +55,6 @@ from alberta_framework.core.types import (
     Prediction,
     Target,
     TimeStep,
-)
-
-# Optimizers
-from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
-
-# Normalizers
-from alberta_framework.core.normalizers import (
-    NormalizerState,
-    OnlineNormalizer,
-    create_normalizer_state,
-)
-
-# Learners
-from alberta_framework.core.learners import (
-    LinearLearner,
-    NormalizedLearnerState,
-    NormalizedLinearLearner,
-    run_learning_loop,
-    run_normalized_learning_loop,
 )
 
 # Streams

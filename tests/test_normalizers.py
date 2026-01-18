@@ -18,7 +18,7 @@ class TestOnlineNormalizer:
         assert state.var.shape == (feature_dim,)
         assert jnp.allclose(state.mean, 0.0)
         assert jnp.allclose(state.var, 1.0)
-        assert state.count == 0.0
+        assert state.sample_count == 0.0
 
     def test_normalize_updates_statistics(self, sample_observation):
         """Normalizing should update mean and variance estimates."""
@@ -28,7 +28,7 @@ class TestOnlineNormalizer:
         normalized, new_state = normalizer.normalize(state, sample_observation)
 
         # Count should increase
-        assert new_state.count == 1.0
+        assert new_state.sample_count == 1.0
 
         # Mean should have moved toward the observation
         assert not jnp.allclose(new_state.mean, state.mean)
@@ -49,12 +49,12 @@ class TestOnlineNormalizer:
 
         # First update state
         _, state = normalizer.normalize(state, sample_observation)
-        original_count = state.count
+        original_count = state.sample_count
 
         # normalize_only should not change count
         _ = normalizer.normalize_only(state, sample_observation)
 
-        assert state.count == original_count
+        assert state.sample_count == original_count
 
     def test_update_only_does_not_return_normalized(self, sample_observation):
         """update_only should only update state, returning new state."""
@@ -64,7 +64,7 @@ class TestOnlineNormalizer:
         new_state = normalizer.update_only(state, sample_observation)
 
         assert isinstance(new_state, NormalizerState)
-        assert new_state.count == 1.0
+        assert new_state.sample_count == 1.0
 
     def test_repeated_updates_converge(self, sample_observation):
         """Mean and variance should converge with repeated identical inputs."""

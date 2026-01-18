@@ -4,7 +4,8 @@ Experience streams generate temporally-uniform experience for continual learning
 Every time step produces a new observation-target pair.
 """
 
-from typing import Iterator, Protocol
+from collections.abc import Iterator
+from typing import Protocol
 
 from alberta_framework.core.types import TimeStep
 

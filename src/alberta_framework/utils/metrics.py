@@ -105,6 +105,8 @@ def compare_learners(
             "mean": float(np.mean(values)),
             "std": float(np.std(values)),
             "cumulative": float(np.sum(values)),
-            "final_100_mean": float(np.mean(values[-100:])) if len(values) >= 100 else float(np.mean(values)),
+            "final_100_mean": (
+                float(np.mean(values[-100:])) if len(values) >= 100 else float(np.mean(values))
+            ),
         }
     return summary

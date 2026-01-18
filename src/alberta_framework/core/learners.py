@@ -12,10 +12,19 @@ from jax import Array
 from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
 from alberta_framework.core.optimizers import LMS, Optimizer
 from alberta_framework.core.types import (
+    AutostepState,
+    IDBDState,
     LearnerState,
+    LMSState,
     Observation,
     Prediction,
     Target,
+)
+from alberta_framework.streams.base import ExperienceStream
+
+# Type alias for any optimizer type
+AnyOptimizer = (
+    Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
 )
 
 
@@ -50,13 +59,13 @@ class LinearLearner:
         optimizer: The optimizer to use for weight updates
     """
 
-    def __init__(self, optimizer: Optimizer | None = None):
+    def __init__(self, optimizer: AnyOptimizer | None = None):
         """Initialize the linear learner.
 
         Args:
             optimizer: Optimizer for weight updates. Defaults to LMS(0.01)
         """
-        self._optimizer = optimizer or LMS(step_size=0.01)
+        self._optimizer: AnyOptimizer = optimizer or LMS(step_size=0.01)
 
     def init(self, feature_dim: int) -> LearnerState:
         """Initialize learner state.
@@ -116,8 +125,10 @@ class LinearLearner:
         error = jnp.squeeze(target) - jnp.squeeze(prediction)
 
         # Get update from optimizer
+        # Note: type ignore needed because we can't statically prove optimizer_state
+        # matches the optimizer's expected state type (though they will at runtime)
         opt_update = self._optimizer.update(
-            state.optimizer_state,
+            state.optimizer_state,  # type: ignore[arg-type]
             error,
             observation,
         )
@@ -150,7 +161,7 @@ class LinearLearner:
 
 def run_learning_loop(
     learner: LinearLearner,
-    stream,
+    stream: ExperienceStream,
     num_steps: int,
     state: LearnerState | None = None,
 ) -> tuple[LearnerState, list[dict[str, float]]]:
@@ -229,7 +240,7 @@ class NormalizedLinearLearner:
 
     def __init__(
         self,
-        optimizer: Optimizer | None = None,
+        optimizer: AnyOptimizer | None = None,
         normalizer: OnlineNormalizer | None = None,
     ):
         """Initialize the normalized linear learner.
@@ -333,7 +344,7 @@ class NormalizedLinearLearner:
 
 def run_normalized_learning_loop(
     learner: NormalizedLinearLearner,
-    stream,
+    stream: ExperienceStream,
     num_steps: int,
     state: NormalizedLearnerState | None = None,
 ) -> tuple[NormalizedLearnerState, list[dict[str, float]]]:

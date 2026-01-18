@@ -11,8 +11,9 @@ Supports multiple prediction modes:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -37,7 +38,7 @@ class PredictionMode(Enum):
     VALUE = "value"
 
 
-def _flatten_space(space: "gymnasium.spaces.Space") -> int:
+def _flatten_space(space: gymnasium.spaces.Space[Any]) -> int:
     """Get the flattened dimension of a Gymnasium space.
 
     Args:
@@ -64,7 +65,7 @@ def _flatten_space(space: "gymnasium.spaces.Space") -> int:
         )
 
 
-def _flatten_observation(obs: Any, space: "gymnasium.spaces.Space") -> Array:
+def _flatten_observation(obs: Any, space: gymnasium.spaces.Space[Any]) -> Array:
     """Flatten an observation to a 1D JAX array.
 
     Args:
@@ -86,7 +87,7 @@ def _flatten_observation(obs: Any, space: "gymnasium.spaces.Space") -> Array:
         raise ValueError(f"Unsupported space type: {type(space).__name__}")
 
 
-def _flatten_action(action: Any, space: "gymnasium.spaces.Space") -> Array:
+def _flatten_action(action: Any, space: gymnasium.spaces.Space[Any]) -> Array:
     """Flatten an action to a 1D JAX array.
 
     Args:
@@ -109,7 +110,7 @@ def _flatten_action(action: Any, space: "gymnasium.spaces.Space") -> Array:
 
 
 def make_random_policy(
-    env: "gymnasium.Env", seed: int = 0
+    env: gymnasium.Env[Any, Any], seed: int = 0
 ) -> Callable[[Array], Any]:
     """Create a random action policy for an environment.
 
@@ -130,7 +131,7 @@ def make_random_policy(
         rng, key = jr.split(rng)
 
         if isinstance(action_space, gymnasium.spaces.Discrete):
-            return int(jr.randint(key, (), 0, action_space.n))
+            return int(jr.randint(key, (), 0, int(action_space.n)))
         elif isinstance(action_space, gymnasium.spaces.Box):
             # Sample uniformly between low and high
             low = jnp.asarray(action_space.low, dtype=jnp.float32)
@@ -150,7 +151,7 @@ def make_random_policy(
 
 def make_epsilon_greedy_policy(
     base_policy: Callable[[Array], Any],
-    env: "gymnasium.Env",
+    env: gymnasium.Env[Any, Any],
     epsilon: float = 0.1,
     seed: int = 0,
 ) -> Callable[[Array], Any]:
@@ -194,7 +195,7 @@ class GymnasiumStream:
 
     def __init__(
         self,
-        env: "gymnasium.Env",
+        env: gymnasium.Env[Any, Any],
         mode: PredictionMode = PredictionMode.REWARD,
         policy: Callable[[Array], Any] | None = None,
         gamma: float = 0.99,
@@ -403,7 +404,7 @@ class TDStream:
 
     def __init__(
         self,
-        env: "gymnasium.Env",
+        env: gymnasium.Env[Any, Any],
         policy: Callable[[Array], Any] | None = None,
         gamma: float = 0.99,
         include_action_in_features: bool = False,
@@ -517,7 +518,7 @@ class TDStream:
             target = jnp.atleast_1d(jnp.array(reward, dtype=jnp.float32))
         else:
             bootstrap = self._value_fn(next_features)
-            target_val = reward + self._gamma * float(bootstrap)
+            target_val = float(reward) + self._gamma * float(bootstrap)
             target = jnp.atleast_1d(jnp.array(target_val, dtype=jnp.float32))
 
         # Update state

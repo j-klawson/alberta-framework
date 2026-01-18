@@ -34,11 +34,11 @@ class OptimizerUpdate(NamedTuple):
     metrics: dict[str, float]
 
 
-class Optimizer(ABC):
+class Optimizer[StateT: (LMSState, IDBDState, AutostepState)](ABC):
     """Base class for optimizers."""
 
     @abstractmethod
-    def init(self, feature_dim: int) -> LMSState | IDBDState | AutostepState:
+    def init(self, feature_dim: int) -> StateT:
         """Initialize optimizer state.
 
         Args:
@@ -52,7 +52,7 @@ class Optimizer(ABC):
     @abstractmethod
     def update(
         self,
-        state: LMSState | IDBDState | AutostepState,
+        state: StateT,
         error: Array,
         observation: Array,
     ) -> OptimizerUpdate:
@@ -69,7 +69,7 @@ class Optimizer(ABC):
         ...
 
 
-class LMS(Optimizer):
+class LMS(Optimizer[LMSState]):
     """Least Mean Square optimizer with fixed step-size.
 
     The simplest gradient-based optimizer: w_{t+1} = w_t + alpha * delta * x_t
@@ -135,7 +135,7 @@ class LMS(Optimizer):
         )
 
 
-class IDBD(Optimizer):
+class IDBD(Optimizer[IDBDState]):
     """Incremental Delta-Bar-Delta optimizer.
 
     IDBD maintains per-weight adaptive step-sizes that are meta-learned
@@ -272,7 +272,7 @@ class IDBD(Optimizer):
         )
 
 
-class Autostep(Optimizer):
+class Autostep(Optimizer[AutostepState]):
     """Autostep optimizer with tuning-free step-size adaptation.
 
     Autostep normalizes gradients to prevent large updates and adapts
@@ -397,7 +397,9 @@ class Autostep(Optimizer):
         new_bias_step_size = jnp.clip(new_bias_step_size, 1e-8, 1.0)
 
         bias_trace_decay = 1.0 - state.bias_step_size
-        new_bias_trace = state.bias_trace * bias_trace_decay + state.bias_step_size * normalized_bias_gradient
+        new_bias_trace = (
+            state.bias_trace * bias_trace_decay + state.bias_step_size * normalized_bias_gradient
+        )
 
         new_bias_normalizer = jnp.maximum(abs_bias_gradient, state.bias_normalizer * tau)
 

@@ -5,7 +5,7 @@ the target function changes over time, testing the learner's ability to
 track and adapt.
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import jax.numpy as jnp
 import jax.random as jr
