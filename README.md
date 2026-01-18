@@ -1,6 +1,4 @@
-# Alberta Framework
-
-**A research-first framework for the Alberta Plan: Building the foundations of Continual AI.**
+# Alberta Framework: a research framework for continual reinforcement learning
 
 [![CI](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -451,6 +449,10 @@ Contributions are welcome! Areas of particular interest:
 - **Visualization**: Tools for understanding adaptation dynamics
 
 Please ensure all tests pass and follow the existing code style.
+
+## Questions & Contact
+
+Open an issue on [GitHub](https://github.com/j-klawson/alberta-framework/issues) for questions, bugs, or discussion.
 
 ## License
 

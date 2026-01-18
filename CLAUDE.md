@@ -54,6 +54,11 @@ python examples/gymnasium_reward_prediction.py
 
 # Run publication-quality experiment (requires analysis)
 python examples/publication_experiment.py
+
+# Build documentation (requires docs)
+pip install -e ".[docs]"
+mkdocs serve          # Local preview at http://localhost:8000
+mkdocs build          # Build static site to site/
 ```
 
 ## Development Guidelines
@@ -180,6 +185,24 @@ results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 - `generate_latex_table()`, `generate_markdown_table()`
 - `export_to_csv()`, `export_to_json()`
 - `save_experiment_report()`: Save all artifacts at once
+
+## Documentation
+
+Documentation is built with MkDocs and mkdocstrings (auto-generated API docs from docstrings).
+
+### Structure
+```
+docs/
+├── index.md                 # Home page
+├── getting-started/         # Installation, quickstart
+├── guide/                   # Concepts, optimizers, streams, experiments
+├── contributing.md
+└── gen_ref_pages.py         # Auto-generates API reference
+mkdocs.yml                   # MkDocs configuration
+```
+
+### Docstring Style
+Use NumPy-style docstrings for all public functions and classes. See `core/optimizers.py` for examples.
 
 ## Future Work (Out of Scope for v0.1.0)
 - Step 2: Feature generation/testing

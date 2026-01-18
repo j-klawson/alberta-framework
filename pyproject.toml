@@ -35,8 +35,12 @@ dev = [
     "mypy",
 ]
 docs = [
-    "mkdocs",
-    "mkdocs-material",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
+    "mkdocs-section-index>=0.3",
 ]
 gymnasium = [
     "gymnasium>=0.29.0",
