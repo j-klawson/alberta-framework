@@ -211,7 +211,9 @@ def run_learning_loop[StreamStateT](
 
     if step_size_tracking is None:
         # Original behavior without tracking
-        def step_fn(carry, idx):
+        def step_fn(
+            carry: tuple[LearnerState, StreamStateT], idx: Array
+        ) -> tuple[tuple[LearnerState, StreamStateT], Array]:
             l_state, s_state = carry
             timestep, new_s_state = stream.step(s_state, idx)
             result = learner.update(l_state, timestep.observation, timestep.target)
@@ -236,7 +238,9 @@ def run_learning_loop[StreamStateT](
         )
         recording_indices = jnp.zeros(num_recordings, dtype=jnp.int32)
 
-        def step_fn_with_tracking(carry, idx):
+        def step_fn_with_tracking(
+            carry: tuple[LearnerState, StreamStateT, Array, Array | None, Array], idx: Array
+        ) -> tuple[tuple[LearnerState, StreamStateT, Array, Array | None, Array], Array]:
             l_state, s_state, ss_history, b_history, rec_indices = carry
 
             # Perform learning step
@@ -260,8 +264,8 @@ def run_learning_loop[StreamStateT](
                 bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
             else:
                 # LMS has a single fixed step-size
-                weight_ss = jnp.full(feature_dim, opt_state.step_size)  # type: ignore[union-attr]
-                bias_ss = opt_state.step_size  # type: ignore[union-attr]
+                weight_ss = jnp.full(feature_dim, opt_state.step_size)
+                bias_ss = opt_state.step_size
 
             # Conditionally update history arrays
             new_ss_history = jax.lax.cond(
@@ -488,7 +492,9 @@ def run_normalized_learning_loop[StreamStateT](
         learner_state = learner.init(stream.feature_dim)
     stream_state = stream.init(key)
 
-    def step_fn(carry, idx):
+    def step_fn(
+        carry: tuple[NormalizedLearnerState, StreamStateT], idx: Array
+    ) -> tuple[tuple[NormalizedLearnerState, StreamStateT], Array]:
         l_state, s_state = carry
         timestep, new_s_state = stream.step(s_state, idx)
         result = learner.update(l_state, timestep.observation, timestep.target)

@@ -15,7 +15,7 @@ Supports multiple prediction modes:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -284,7 +284,9 @@ def learn_from_trajectory(
     if learner_state is None:
         learner_state = learner.init(observations.shape[1])
 
-    def step_fn(state, inputs):
+    def step_fn(
+        state: LearnerState, inputs: tuple[Array, Array]
+    ) -> tuple[LearnerState, Array]:
         obs, target = inputs
         result = learner.update(state, obs, target)
         return result.state, result.metrics
@@ -315,7 +317,9 @@ def learn_from_trajectory_normalized(
     if learner_state is None:
         learner_state = learner.init(observations.shape[1])
 
-    def step_fn(state, inputs):
+    def step_fn(
+        state: NormalizedLearnerState, inputs: tuple[Array, Array]
+    ) -> tuple[NormalizedLearnerState, Array]:
         obs, target = inputs
         result = learner.update(state, obs, target)
         return result.state, result.metrics
@@ -459,7 +463,7 @@ class GymnasiumStream:
         else:
             raise ValueError(f"Unknown mode: {self._mode}")
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[TimeStep]:
         """Return self as iterator."""
         return self
 
@@ -578,7 +582,7 @@ class TDStream:
             return jnp.concatenate([obs, action])
         return obs
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[TimeStep]:
         """Return self as iterator."""
         return self
 

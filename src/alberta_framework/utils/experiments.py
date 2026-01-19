@@ -5,7 +5,7 @@ with optional parallelization and aggregation of results.
 """
 
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import jax.random as jr
 import numpy as np
@@ -35,7 +35,7 @@ class ExperimentConfig(NamedTuple):
 
     name: str
     learner_factory: Callable[[], LinearLearner | NormalizedLinearLearner]
-    stream_factory: Callable[[], ScanStream]
+    stream_factory: Callable[[], ScanStream[Any]]
     num_steps: int
 
 
@@ -115,7 +115,8 @@ def run_single_experiment(
         )
         metrics_history = metrics_to_dicts(metrics, normalized=True)
     else:
-        final_state, metrics = run_learning_loop(learner, stream, config.num_steps, key)
+        result = run_learning_loop(learner, stream, config.num_steps, key)
+        final_state, metrics = cast(tuple[LearnerState, Any], result)
         metrics_history = metrics_to_dicts(metrics)
 
     return SingleRunResult(

@@ -10,13 +10,13 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.13"
 authors = [
-    { name = "Keith", email = "keith@example.com" }
+    { name = "J. Klawson", email = "j-klawson@users.noreply.github.com" }
 ]
 keywords = ["machine-learning", "continual-learning", "meta-learning", "jax", "reinforcement-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -56,8 +56,8 @@ gpu = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/keith/alberta-framework"
-Repository = "https://github.com/keith/alberta-framework"
+Homepage = "https://github.com/j-klawson/alberta-framework"
+Repository = "https://github.com/j-klawson/alberta-framework"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/alberta_framework"]
