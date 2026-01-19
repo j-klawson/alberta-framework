@@ -20,6 +20,8 @@ from alberta_framework.core.types import (
     LMSState,
     Observation,
     Prediction,
+    StepSizeHistory,
+    StepSizeTrackingConfig,
     Target,
 )
 from alberta_framework.streams.base import ScanStream
@@ -162,7 +164,8 @@ def run_learning_loop[StreamStateT](
     num_steps: int,
     key: Array,
     learner_state: LearnerState | None = None,
-) -> tuple[LearnerState, Array]:
+    step_size_tracking: StepSizeTrackingConfig | None = None,
+) -> tuple[LearnerState, Array] | tuple[LearnerState, Array, StepSizeHistory]:
     """Run the learning loop using jax.lax.scan.
 
     This is a JIT-compiled learning loop that uses scan for efficiency.
@@ -174,27 +177,143 @@ def run_learning_loop[StreamStateT](
         num_steps: Number of learning steps to run
         key: JAX random key for stream initialization
         learner_state: Initial state (if None, will be initialized from stream)
+        step_size_tracking: Optional config for recording per-weight step-sizes.
+            When provided, returns a 3-tuple including StepSizeHistory.
 
     Returns:
-        Tuple of (final_state, metrics_array) where metrics_array has shape
-        (num_steps, 3) with columns [squared_error, error, mean_step_size]
+        If step_size_tracking is None:
+            Tuple of (final_state, metrics_array) where metrics_array has shape
+            (num_steps, 3) with columns [squared_error, error, mean_step_size]
+        If step_size_tracking is provided:
+            Tuple of (final_state, metrics_array, step_size_history)
+
+    Raises:
+        ValueError: If step_size_tracking.interval is less than 1 or greater than num_steps
     """
+    # Validate tracking config
+    if step_size_tracking is not None:
+        if step_size_tracking.interval < 1:
+            raise ValueError(
+                f"step_size_tracking.interval must be >= 1, got {step_size_tracking.interval}"
+            )
+        if step_size_tracking.interval > num_steps:
+            raise ValueError(
+                f"step_size_tracking.interval ({step_size_tracking.interval}) "
+                f"must be <= num_steps ({num_steps})"
+            )
+
     # Initialize states
     if learner_state is None:
         learner_state = learner.init(stream.feature_dim)
     stream_state = stream.init(key)
 
-    def step_fn(carry, idx):
-        l_state, s_state = carry
-        timestep, new_s_state = stream.step(s_state, idx)
-        result = learner.update(l_state, timestep.observation, timestep.target)
-        return (result.state, new_s_state), result.metrics
+    feature_dim = stream.feature_dim
 
-    (final_learner, _), metrics = jax.lax.scan(
-        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
-    )
+    if step_size_tracking is None:
+        # Original behavior without tracking
+        def step_fn(carry, idx):
+            l_state, s_state = carry
+            timestep, new_s_state = stream.step(s_state, idx)
+            result = learner.update(l_state, timestep.observation, timestep.target)
+            return (result.state, new_s_state), result.metrics
 
-    return final_learner, metrics
+        (final_learner, _), metrics = jax.lax.scan(
+            step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+        )
+
+        return final_learner, metrics
+
+    else:
+        # Step-size tracking enabled
+        interval = step_size_tracking.interval
+        include_bias = step_size_tracking.include_bias
+        num_recordings = num_steps // interval
+
+        # Pre-allocate history arrays
+        step_size_history = jnp.zeros((num_recordings, feature_dim), dtype=jnp.float32)
+        bias_history = (
+            jnp.zeros(num_recordings, dtype=jnp.float32) if include_bias else None
+        )
+        recording_indices = jnp.zeros(num_recordings, dtype=jnp.int32)
+
+        def step_fn_with_tracking(carry, idx):
+            l_state, s_state, ss_history, b_history, rec_indices = carry
+
+            # Perform learning step
+            timestep, new_s_state = stream.step(s_state, idx)
+            result = learner.update(l_state, timestep.observation, timestep.target)
+
+            # Check if we should record at this step (idx % interval == 0)
+            should_record = (idx % interval) == 0
+            recording_idx = idx // interval
+
+            # Extract current step-sizes
+            # Use hasattr checks at trace time (this works because the type is fixed)
+            opt_state = result.state.optimizer_state
+            if hasattr(opt_state, "log_step_sizes"):
+                # IDBD stores log step-sizes
+                weight_ss = jnp.exp(opt_state.log_step_sizes)  # type: ignore[union-attr]
+                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+            elif hasattr(opt_state, "step_sizes"):
+                # Autostep stores step-sizes directly
+                weight_ss = opt_state.step_sizes  # type: ignore[union-attr]
+                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+            else:
+                # LMS has a single fixed step-size
+                weight_ss = jnp.full(feature_dim, opt_state.step_size)  # type: ignore[union-attr]
+                bias_ss = opt_state.step_size  # type: ignore[union-attr]
+
+            # Conditionally update history arrays
+            new_ss_history = jax.lax.cond(
+                should_record,
+                lambda _: ss_history.at[recording_idx].set(weight_ss),
+                lambda _: ss_history,
+                None,
+            )
+
+            new_b_history = b_history
+            if b_history is not None:
+                new_b_history = jax.lax.cond(
+                    should_record,
+                    lambda _: b_history.at[recording_idx].set(bias_ss),
+                    lambda _: b_history,
+                    None,
+                )
+
+            new_rec_indices = jax.lax.cond(
+                should_record,
+                lambda _: rec_indices.at[recording_idx].set(idx),
+                lambda _: rec_indices,
+                None,
+            )
+
+            return (
+                result.state,
+                new_s_state,
+                new_ss_history,
+                new_b_history,
+                new_rec_indices,
+            ), result.metrics
+
+        initial_carry = (
+            learner_state,
+            stream_state,
+            step_size_history,
+            bias_history,
+            recording_indices,
+        )
+
+        (final_learner, _, final_ss_history, final_b_history, final_rec_indices), metrics = (
+            jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+        )
+
+        history = StepSizeHistory(
+            step_sizes=final_ss_history,
+            bias_step_sizes=final_b_history,
+            recording_indices=final_rec_indices,
+        )
+
+        return final_learner, metrics, history
 
 
 class NormalizedLearnerState(NamedTuple):

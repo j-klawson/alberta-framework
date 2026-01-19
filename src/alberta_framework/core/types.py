@@ -107,6 +107,32 @@ class AutostepState(NamedTuple):
     bias_normalizer: Array
 
 
+class StepSizeTrackingConfig(NamedTuple):
+    """Configuration for recording per-weight step-sizes during training.
+
+    Attributes:
+        interval: Record step-sizes every N steps
+        include_bias: Whether to also record the bias step-size
+    """
+
+    interval: int
+    include_bias: bool = True
+
+
+class StepSizeHistory(NamedTuple):
+    """History of per-weight step-sizes recorded during training.
+
+    Attributes:
+        step_sizes: Per-weight step-sizes at each recording, shape (num_recordings, num_weights)
+        bias_step_sizes: Bias step-sizes at each recording, shape (num_recordings,) or None
+        recording_indices: Step indices where recordings were made, shape (num_recordings,)
+    """
+
+    step_sizes: Array  # (num_recordings, num_weights)
+    bias_step_sizes: Array | None  # (num_recordings,) or None
+    recording_indices: Array  # (num_recordings,)
+
+
 def create_lms_state(step_size: float = 0.01) -> LMSState:
     """Create initial LMS optimizer state.
 

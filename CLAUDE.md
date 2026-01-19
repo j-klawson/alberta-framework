@@ -14,7 +14,7 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState
+│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
 │   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
@@ -120,6 +120,33 @@ Streaming feature normalization following the Alberta Plan:
 ### Success Criterion
 IDBD/Autostep should beat LMS when starting from the same step-size (demonstrates adaptation).
 With optimal parameters, adaptive methods should match best grid-searched LMS.
+
+### Step-Size Tracking for Meta-Adaptation Analysis
+The `run_learning_loop` function supports optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
+
+```python
+from alberta_framework import LinearLearner, IDBD, StepSizeTrackingConfig, run_learning_loop
+from alberta_framework.streams import RandomWalkStream
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+learner = LinearLearner(optimizer=IDBD())
+config = StepSizeTrackingConfig(interval=100)  # Record every 100 steps
+
+state, metrics, history = run_learning_loop(
+    learner, stream, num_steps=10000, key=jr.key(42), step_size_tracking=config
+)
+
+# history.step_sizes: shape (100, 10) - per-weight step-sizes at each recording
+# history.bias_step_sizes: shape (100,) - bias step-size at each recording
+# history.recording_indices: shape (100,) - step indices where recordings were made
+```
+
+Key features:
+- Recording happens inside the JAX scan loop (no Python loop overhead)
+- Configurable interval to control memory usage
+- Optional `include_bias=False` to skip bias tracking
+- Works with LMS (constant), IDBD, and Autostep optimizers
 
 ## Gymnasium Integration
 

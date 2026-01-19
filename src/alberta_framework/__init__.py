@@ -52,6 +52,8 @@ from alberta_framework.core.types import (
     LMSState,
     Observation,
     Prediction,
+    StepSizeHistory,
+    StepSizeTrackingConfig,
     Target,
     TimeStep,
 )
@@ -112,6 +114,8 @@ __all__ = [
     "NormalizerState",
     "Observation",
     "Prediction",
+    "StepSizeHistory",
+    "StepSizeTrackingConfig",
     "Target",
     "TimeStep",
     "UpdateResult",

@@ -5,10 +5,13 @@ import jax.random as jr
 import pytest
 
 from alberta_framework import (
+    Autostep,
     IDBD,
     LMS,
     LinearLearner,
     RandomWalkStream,
+    StepSizeHistory,
+    StepSizeTrackingConfig,
     metrics_to_dicts,
     run_learning_loop,
 )
@@ -155,3 +158,182 @@ class TestRunLearningLoop:
 
         assert jnp.allclose(state1.weights, state2.weights)
         assert jnp.allclose(metrics1, metrics2)
+
+
+class TestStepSizeTracking:
+    """Tests for step-size tracking in run_learning_loop."""
+
+    def test_returns_3_tuple_when_tracking_enabled(self, rng_key):
+        """Should return 3-tuple (state, metrics, history) when tracking enabled."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=10)
+
+        result = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        assert len(result) == 3
+        state, metrics, history = result
+        assert state is not None
+        assert metrics is not None
+        assert isinstance(history, StepSizeHistory)
+
+    def test_returns_2_tuple_when_tracking_disabled(self, rng_key):
+        """Should return 2-tuple (state, metrics) when tracking disabled (backward compat)."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+
+        result = run_learning_loop(learner, stream, num_steps=100, key=rng_key)
+
+        assert len(result) == 2
+        state, metrics = result
+        assert state is not None
+        assert metrics is not None
+
+    def test_history_shape_based_on_interval(self, rng_key):
+        """History should have correct shape based on interval."""
+        feature_dim = 10
+        num_steps = 1000
+        interval = 100
+        expected_recordings = num_steps // interval  # 10
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=interval)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
+        )
+
+        assert history.step_sizes.shape == (expected_recordings, feature_dim)
+        assert history.bias_step_sizes.shape == (expected_recordings,)
+        assert history.recording_indices.shape == (expected_recordings,)
+
+    def test_lms_returns_constant_step_sizes(self, rng_key):
+        """LMS should return constant step-sizes throughout training."""
+        step_size = 0.05
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=LMS(step_size=step_size))
+        config = StepSizeTrackingConfig(interval=10)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        # All step-sizes should be equal to the fixed step_size
+        assert jnp.allclose(history.step_sizes, step_size)
+        assert jnp.allclose(history.bias_step_sizes, step_size)
+
+    def test_idbd_step_sizes_evolve(self, rng_key):
+        """IDBD step-sizes should change over training."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.01)
+        learner = LinearLearner(optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.1))
+        config = StepSizeTrackingConfig(interval=100)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=10000, key=rng_key, step_size_tracking=config
+        )
+
+        # First and last recordings should differ
+        first_mean = jnp.mean(history.step_sizes[0])
+        last_mean = jnp.mean(history.step_sizes[-1])
+        assert not jnp.isclose(first_mean, last_mean, rtol=0.1)
+
+    def test_autostep_step_sizes_evolve(self, rng_key):
+        """Autostep step-sizes should change over training."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.01)
+        learner = LinearLearner(optimizer=Autostep(initial_step_size=0.01, meta_step_size=0.1))
+        config = StepSizeTrackingConfig(interval=100)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=10000, key=rng_key, step_size_tracking=config
+        )
+
+        # First and last recordings should differ
+        first_mean = jnp.mean(history.step_sizes[0])
+        last_mean = jnp.mean(history.step_sizes[-1])
+        assert not jnp.isclose(first_mean, last_mean, rtol=0.1)
+
+    def test_interval_1_records_every_step(self, rng_key):
+        """Interval of 1 should record at every step."""
+        num_steps = 50
+        feature_dim = 3
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=1)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
+        )
+
+        assert history.step_sizes.shape == (num_steps, feature_dim)
+        # Recording indices should be 0, 1, 2, ..., num_steps-1
+        expected_indices = jnp.arange(num_steps)
+        assert jnp.allclose(history.recording_indices, expected_indices)
+
+    def test_interval_equals_num_steps_records_once(self, rng_key):
+        """Interval equal to num_steps should record once at step 0."""
+        num_steps = 100
+        feature_dim = 5
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=num_steps)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
+        )
+
+        assert history.step_sizes.shape == (1, feature_dim)
+        assert history.recording_indices[0] == 0
+
+    def test_invalid_interval_zero_raises_error(self, rng_key):
+        """Interval of 0 should raise ValueError."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+        config = StepSizeTrackingConfig(interval=0)
+
+        with pytest.raises(ValueError, match="interval must be >= 1"):
+            run_learning_loop(
+                learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+            )
+
+    def test_invalid_interval_greater_than_num_steps_raises_error(self, rng_key):
+        """Interval greater than num_steps should raise ValueError."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+        config = StepSizeTrackingConfig(interval=200)
+
+        with pytest.raises(ValueError, match="must be <= num_steps"):
+            run_learning_loop(
+                learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+            )
+
+    def test_include_bias_false_returns_none(self, rng_key):
+        """When include_bias=False, bias_step_sizes should be None."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=10, include_bias=False)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        assert history.bias_step_sizes is None
+        assert history.step_sizes is not None
+
+    def test_recording_indices_correct(self, rng_key):
+        """Recording indices should match expected values based on interval."""
+        num_steps = 100
+        interval = 25
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=interval)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
+        )
+
+        # Should record at steps 0, 25, 50, 75
+        expected_indices = jnp.array([0, 25, 50, 75])
+        assert jnp.allclose(history.recording_indices, expected_indices)
