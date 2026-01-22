@@ -16,18 +16,18 @@ Usage:
     python examples/step1_autostep_comparison.py
 """
 
-import numpy as np
+import jax.random as jr
 
 from alberta_framework import (
     Autostep,
     IDBD,
     LMS,
     LinearLearner,
-    AbruptChangeTarget,
-    CyclicTarget,
-    RandomWalkTarget,
+    AbruptChangeStream,
+    CyclicStream,
+    RandomWalkStream,
     compare_learners,
-    compute_tracking_error,
+    metrics_to_dicts,
     run_learning_loop,
 )
 
@@ -58,30 +58,33 @@ def run_comparison(
     # LMS configurations
     lms_configs = [0.01, 0.05, 0.1]
     for alpha in lms_configs:
-        stream = stream_class(feature_dim=feature_dim, seed=seed, **stream_kwargs)
+        stream = stream_class(feature_dim=feature_dim, **stream_kwargs)
         learner = LinearLearner(optimizer=LMS(step_size=alpha))
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"LMS(α={alpha})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"LMS(α={alpha})"] = metrics_to_dicts(metrics)
 
     # IDBD configurations
     idbd_configs = [(0.05, 0.05), (0.1, 0.1)]
     for initial_alpha, beta in idbd_configs:
-        stream = stream_class(feature_dim=feature_dim, seed=seed, **stream_kwargs)
+        stream = stream_class(feature_dim=feature_dim, **stream_kwargs)
         learner = LinearLearner(
             optimizer=IDBD(initial_step_size=initial_alpha, meta_step_size=beta)
         )
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"IDBD(α₀={initial_alpha},β={beta})"] = metrics_to_dicts(metrics)
 
     # Autostep configurations
     autostep_configs = [(0.05, 0.05), (0.1, 0.1)]
     for initial_alpha, mu in autostep_configs:
-        stream = stream_class(feature_dim=feature_dim, seed=seed, **stream_kwargs)
+        stream = stream_class(feature_dim=feature_dim, **stream_kwargs)
         learner = LinearLearner(
             optimizer=Autostep(initial_step_size=initial_alpha, meta_step_size=mu)
         )
-        _, metrics = run_learning_loop(learner, stream, num_steps)
-        results[f"Autostep(α₀={initial_alpha},μ={mu})"] = metrics
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"Autostep(α₀={initial_alpha},μ={mu})"] = metrics_to_dicts(metrics)
 
     return results
 
@@ -136,9 +139,9 @@ def main():
 
     # Test on different stream types
     stream_configs = [
-        (RandomWalkTarget, "Random Walk (gradual drift)", {"drift_rate": 0.001}),
-        (AbruptChangeTarget, "Abrupt Changes (sudden shifts)", {"change_interval": 1000}),
-        (CyclicTarget, "Cyclic (repeating patterns)", {"cycle_length": 500}),
+        (RandomWalkStream, "Random Walk (gradual drift)", {"drift_rate": 0.001}),
+        (AbruptChangeStream, "Abrupt Changes (sudden shifts)", {"change_interval": 1000}),
+        (CyclicStream, "Cyclic (repeating patterns)", {"cycle_length": 500}),
     ]
 
     all_summaries = {}

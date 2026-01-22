@@ -1,17 +1,35 @@
 """Experience streams for continual learning."""
 
-from alberta_framework.streams.base import ExperienceStream
+from alberta_framework.streams.base import ScanStream
 from alberta_framework.streams.synthetic import (
+    AbruptChangeState,
+    AbruptChangeStream,
     AbruptChangeTarget,
+    CyclicState,
+    CyclicStream,
     CyclicTarget,
+    RandomWalkState,
+    RandomWalkStream,
     RandomWalkTarget,
+    SuttonExperiment1State,
+    SuttonExperiment1Stream,
 )
 
 __all__ = [
+    # Protocol
+    "ScanStream",
+    # Stream classes
+    "AbruptChangeState",
+    "AbruptChangeStream",
     "AbruptChangeTarget",
+    "CyclicState",
+    "CyclicStream",
     "CyclicTarget",
-    "ExperienceStream",
+    "RandomWalkState",
+    "RandomWalkStream",
     "RandomWalkTarget",
+    "SuttonExperiment1State",
+    "SuttonExperiment1Stream",
 ]
 
 # Gymnasium streams are optional - only export if gymnasium is installed
@@ -20,6 +38,9 @@ try:
         GymnasiumStream,
         PredictionMode,
         TDStream,
+        collect_trajectory,
+        learn_from_trajectory,
+        learn_from_trajectory_normalized,
         make_epsilon_greedy_policy,
         make_gymnasium_stream,
         make_random_policy,
@@ -29,6 +50,9 @@ try:
         "GymnasiumStream",
         "PredictionMode",
         "TDStream",
+        "collect_trajectory",
+        "learn_from_trajectory",
+        "learn_from_trajectory_normalized",
         "make_epsilon_greedy_policy",
         "make_gymnasium_stream",
         "make_random_policy",

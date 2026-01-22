@@ -5,7 +5,7 @@ including learning curves, bar plots, heatmaps, and multi-panel figures.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -130,7 +130,7 @@ def plot_learning_curves(
     if ax is None:
         fig, ax = plt.subplots()
     else:
-        fig = ax.figure
+        fig = cast("Figure", ax.figure)
     # Default colors
     default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
@@ -197,7 +197,7 @@ def plot_final_performance_bars(
     if ax is None:
         fig, ax = plt.subplots()
     else:
-        fig = ax.figure
+        fig = cast("Figure", ax.figure)
     names = list(results.keys())
     means = [results[name].summary[metric].mean for name in names]
     stds = [results[name].summary[metric].std for name in names]
@@ -288,7 +288,7 @@ def plot_hyperparameter_heatmap(
     if ax is None:
         fig, ax = plt.subplots()
     else:
-        fig = ax.figure
+        fig = cast("Figure", ax.figure)
     # Build heatmap data
     data = np.zeros((len(param1_values), len(param2_values)))
     for i, p1 in enumerate(param1_values):
@@ -363,7 +363,7 @@ def plot_step_size_evolution(
     if ax is None:
         fig, ax = plt.subplots()
     else:
-        fig = ax.figure
+        fig = cast("Figure", ax.figure)
     default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
     for i, (name, agg) in enumerate(results.items()):

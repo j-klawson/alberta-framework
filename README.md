@@ -87,25 +87,22 @@ Requirements:
 ## Quick Start
 
 ```python
-from alberta_framework import LinearLearner, IDBD, RandomWalkTarget
+import jax.random as jr
+from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop, metrics_to_dicts
 
 # Create a non-stationary stream where the target drifts over time
-stream = RandomWalkTarget(feature_dim=10, drift_rate=0.001)
+stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
 
 # Create a learner with IDBD (meta-learned step-sizes)
 learner = LinearLearner(optimizer=IDBD())
 
-# Initialize and run the learning loop
-state = learner.init(stream.feature_dim)
+# Run the learning loop (uses jax.lax.scan for JIT-compiled training)
+key = jr.key(42)
+state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=key)
 
-for step, timestep in enumerate(stream):
-    if step >= 10000:
-        break
-    result = learner.update(state, timestep.observation, timestep.target)
-    state = result.state
-
-    if step % 1000 == 0:
-        print(f"Step {step}: squared_error = {result.metrics['squared_error']:.4f}")
+# Convert metrics array to list of dicts for analysis
+metrics_list = metrics_to_dicts(metrics)
+print(f"Final squared_error: {metrics_list[-1]['squared_error']:.4f}")
 ```
 
 ## Key Components
@@ -144,39 +141,44 @@ normalized_learner = NormalizedLinearLearner(optimizer=IDBD())
 
 ### Experience Streams
 
-Non-stationary target generators for testing continual learning:
+Non-stationary target generators for testing continual learning. All streams implement the `ScanStream` protocol with `init(key)` and `step(state, idx)` methods for use with `jax.lax.scan`:
 
 ```python
-from alberta_framework import RandomWalkTarget, AbruptChangeTarget, CyclicTarget
+from alberta_framework import RandomWalkStream, AbruptChangeStream, CyclicStream
 
 # Gradual drift (target weights perform random walk)
-stream1 = RandomWalkTarget(feature_dim=10, drift_rate=0.001)
+stream1 = RandomWalkStream(feature_dim=10, drift_rate=0.001)
 
 # Sudden changes (target switches every N steps)
-stream2 = AbruptChangeTarget(feature_dim=10, change_interval=1000)
+stream2 = AbruptChangeStream(feature_dim=10, change_interval=1000)
 
 # Cyclic changes (target cycles through configurations)
-stream3 = CyclicTarget(feature_dim=10, num_configurations=4, cycle_length=500)
+stream3 = CyclicStream(feature_dim=10, num_configurations=4, cycle_length=500)
 ```
 
 ### Gymnasium Integration
 
-Use any Gymnasium RL environment as an experience stream:
+Use any Gymnasium RL environment with the framework via trajectory collection:
 
 ```python
-from alberta_framework import LinearLearner, IDBD, run_learning_loop
-from alberta_framework.streams.gymnasium import make_gymnasium_stream, PredictionMode
-
-# Reward prediction: predict r from (s, a)
-stream = make_gymnasium_stream(
-    "CartPole-v1",
-    mode=PredictionMode.REWARD,
-    include_action_in_features=True,
+import gymnasium as gym
+from alberta_framework import LinearLearner, IDBD, metrics_to_dicts
+from alberta_framework.streams.gymnasium import (
+    collect_trajectory, learn_from_trajectory, PredictionMode, make_random_policy
 )
 
-# Use with existing learners
+# Create environment and policy
+env = gym.make("CartPole-v1")
+policy = make_random_policy(env, seed=42)
+
+# Collect trajectory (Python loop for env interaction)
+observations, targets = collect_trajectory(
+    env, policy, num_steps=10000, mode=PredictionMode.REWARD
+)
+
+# Learn from trajectory (JIT-compiled scan)
 learner = LinearLearner(optimizer=IDBD())
-state, metrics = run_learning_loop(learner, stream, num_steps=10000)
+state, metrics = learn_from_trajectory(learner, observations, targets)
 ```
 
 **Prediction Modes**:
@@ -185,7 +187,8 @@ state, metrics = run_learning_loop(learner, stream, num_steps=10000)
 - `VALUE`: Predict cumulative return (TD learning)
 
 **Features**:
-- Auto-reset on episode boundaries (infinite stream)
+- Trajectory collection separates env interaction from learning
+- JIT-compiled learning via `jax.lax.scan`
 - Custom policy support (random by default)
 - Works with Box, Discrete, and MultiDiscrete spaces
 
@@ -288,12 +291,24 @@ LearnerState(weights, bias, optimizer_state)  # Immutable learner state
 NormalizerState(mean, var, count, decay)      # Normalizer statistics
 ```
 
+### Stream Protocol
+
+```python
+# ScanStream protocol - all streams implement this interface
+class ScanStream(Protocol[StateT]):
+    @property
+    def feature_dim(self) -> int: ...
+    def init(self, key: Array) -> StateT: ...
+    def step(self, state: StateT, idx: Array) -> tuple[TimeStep, StateT]: ...
+```
+
 ### Utility Functions
 
 ```python
 from alberta_framework import (
-    run_learning_loop,          # Run learning for N steps
+    run_learning_loop,          # Run learning for N steps (uses jax.lax.scan)
     run_normalized_learning_loop,  # With normalization
+    metrics_to_dicts,           # Convert metrics array to list of dicts
     compute_tracking_error,     # Running mean of squared error
     compute_cumulative_error,   # Cumulative error over time
     compare_learners,           # Compare multiple learners
@@ -315,7 +330,7 @@ pip install -e ".[analysis]"  # Adds matplotlib, scipy, joblib, tqdm
 Run experiments across multiple seeds with optional parallelization:
 
 ```python
-from alberta_framework import IDBD, LMS, LinearLearner, RandomWalkTarget
+from alberta_framework import IDBD, LMS, LinearLearner, RandomWalkStream
 from alberta_framework.utils import (
     ExperimentConfig,
     run_multi_seed_experiment,
@@ -326,13 +341,13 @@ configs = [
     ExperimentConfig(
         name="LMS",
         learner_factory=lambda: LinearLearner(optimizer=LMS(0.01)),
-        stream_factory=lambda seed: RandomWalkTarget(feature_dim=10, seed=seed),
+        stream_factory=lambda: RandomWalkStream(feature_dim=10),
         num_steps=10000,
     ),
     ExperimentConfig(
         name="IDBD",
         learner_factory=lambda: LinearLearner(optimizer=IDBD()),
-        stream_factory=lambda seed: RandomWalkTarget(feature_dim=10, seed=seed),
+        stream_factory=lambda: RandomWalkStream(feature_dim=10),
         num_steps=10000,
     ),
 ]
@@ -431,7 +446,9 @@ This generates:
 
 3. **Functional Style**: Pure functions enable `jit` compilation, `vmap` batching, and `grad` differentiation.
 
-4. **Temporal Uniformity**: Every component updates at every step — no special initialization phases.
+4. **Scan-Based Learning**: Learning loops use `jax.lax.scan` for JIT-compiled, efficient training.
+
+5. **Temporal Uniformity**: Every component updates at every step — no special initialization phases.
 
 ## References
 

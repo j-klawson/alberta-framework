@@ -28,8 +28,9 @@ Usage:
 """
 
 import jax.numpy as jnp
+import jax.random as jr
 
-from alberta_framework import IDBD, LMS, LinearLearner, run_learning_loop
+from alberta_framework import IDBD, LMS, LinearLearner, run_learning_loop, metrics_to_dicts
 from alberta_framework.streams.synthetic import SuttonExperiment1Stream
 
 
@@ -54,18 +55,20 @@ def run_single_experiment(
         num_relevant=5,
         num_irrelevant=15,
         change_interval=20,
-        seed=seed,
     )
     learner = LinearLearner(optimizer=optimizer)
 
     # Burn-in phase
-    state, _ = run_learning_loop(learner, stream, burn_in_steps)
+    key = jr.key(seed)
+    state, _ = run_learning_loop(learner, stream, burn_in_steps, key)
 
-    # Measurement phase
-    _, metrics = run_learning_loop(learner, stream, measurement_steps, state=state)
+    # Measurement phase - use a new key derived from original
+    key_measure = jr.key(seed + 1000000)  # Different key for measurement
+    _, metrics = run_learning_loop(learner, stream, measurement_steps, key_measure, learner_state=state)
 
     # Compute average MSE
-    avg_mse = sum(m["squared_error"] for m in metrics) / len(metrics)
+    metrics_list = metrics_to_dicts(metrics)
+    avg_mse = sum(m["squared_error"] for m in metrics_list) / len(metrics_list)
     return avg_mse
 
 
@@ -223,13 +226,13 @@ def analyze_learning_rate_evolution(
         num_relevant=5,
         num_irrelevant=15,
         change_interval=20,
-        seed=seed,
     )
     learner = LinearLearner(
         optimizer=IDBD(initial_step_size=initial_alpha, meta_step_size=theta)
     )
 
-    state, _ = run_learning_loop(learner, stream, num_steps)
+    key = jr.key(seed)
+    state, _ = run_learning_loop(learner, stream, num_steps, key)
 
     # Extract final learning rates from IDBD state
     # IDBD stores log_step_sizes, so we need to exponentiate

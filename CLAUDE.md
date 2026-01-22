@@ -14,14 +14,14 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState
+│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop
+│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
 ├── streams/
-│   ├── base.py         # ExperienceStream protocol
-│   ├── synthetic.py    # RandomWalkTarget, AbruptChangeTarget, CyclicTarget, SuttonExperiment1Stream
-│   └── gymnasium.py    # GymnasiumStream, TDStream, PredictionMode (optional)
+│   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
+│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, SuttonExperiment1Stream
+│   └── gymnasium.py    # collect_trajectory, learn_from_trajectory, GymnasiumStream (optional)
 └── utils/
     ├── metrics.py      # compute_tracking_error, compare_learners, etc.
     ├── experiments.py  # ExperimentConfig, run_multi_seed_experiment, AggregatedResults
@@ -69,14 +69,16 @@ mkdocs build          # Build static site to site/
 
 ### Design Principles
 - **Immutable State**: All state uses NamedTuples for JAX compatibility
-- **Functional Style**: Pure functions enable `jit`, `vmap`
+- **Functional Style**: Pure functions enable `jit`, `vmap`, `jax.lax.scan`
+- **Scan-Based Learning**: Learning loops use `jax.lax.scan` for JIT-compiled training
 - **Composition**: Learners accept optimizers as parameters
 - **Temporal Uniformity**: Every component updates at every time step
 
 ### JAX Conventions
 - Use `jax.numpy` (imported as `jnp`) not regular numpy for array operations
-- Use `jax.random` with explicit key management
+- Use `jax.random` with explicit key management: `key = jr.key(seed)`
 - State is immutable - return new state objects, don't mutate
+- Streams use `ScanStream` protocol with `init(key)` and `step(state, idx)` methods
 
 ### Testing
 - Tests are in `tests/` directory
@@ -120,6 +122,33 @@ Streaming feature normalization following the Alberta Plan:
 IDBD/Autostep should beat LMS when starting from the same step-size (demonstrates adaptation).
 With optimal parameters, adaptive methods should match best grid-searched LMS.
 
+### Step-Size Tracking for Meta-Adaptation Analysis
+The `run_learning_loop` function supports optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
+
+```python
+from alberta_framework import LinearLearner, IDBD, StepSizeTrackingConfig, run_learning_loop
+from alberta_framework.streams import RandomWalkStream
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+learner = LinearLearner(optimizer=IDBD())
+config = StepSizeTrackingConfig(interval=100)  # Record every 100 steps
+
+state, metrics, history = run_learning_loop(
+    learner, stream, num_steps=10000, key=jr.key(42), step_size_tracking=config
+)
+
+# history.step_sizes: shape (100, 10) - per-weight step-sizes at each recording
+# history.bias_step_sizes: shape (100,) - bias step-size at each recording
+# history.recording_indices: shape (100,) - step indices where recordings were made
+```
+
+Key features:
+- Recording happens inside the JAX scan loop (no Python loop overhead)
+- Configurable interval to control memory usage
+- Optional `include_bias=False` to skip bias tracking
+- Works with LMS (constant), IDBD, and Autostep optimizers
+
 ## Gymnasium Integration
 
 Wrap Gymnasium RL environments as experience streams for the framework.
@@ -129,31 +158,36 @@ Wrap Gymnasium RL environments as experience streams for the framework.
 - **NEXT_STATE**: Predict next state from (state, action)
 - **VALUE**: Predict cumulative return (TD learning)
 
-### Key Classes
-- `GymnasiumStream`: Main wrapper, auto-resets on episode boundaries
-- `TDStream`: For proper TD learning with value function bootstrap
-- `PredictionMode`: Enum for prediction mode selection
-
-### Factory Functions
-- `make_gymnasium_stream(env_id, mode, ...)`: Create stream from env ID
+### Key Functions
+- `collect_trajectory(env, policy, num_steps, mode, ...)`: Collect trajectory using Python loop
+- `learn_from_trajectory(learner, observations, targets)`: Learn from trajectory using scan
+- `learn_from_trajectory_normalized(learner, observations, targets)`: With normalization
+- `make_gymnasium_stream(env_id, mode, ...)`: Create stream from env ID (for Python loops)
 - `make_random_policy(env, seed)`: Create random action policy
 - `make_epsilon_greedy_policy(base, env, epsilon, seed)`: Wrap policy with exploration
 
-### Example Usage
+### Example Usage (Trajectory Collection - Recommended)
 ```python
-from alberta_framework import LinearLearner, IDBD, run_learning_loop
-from alberta_framework.streams.gymnasium import make_gymnasium_stream, PredictionMode
+import jax.random as jr
+from alberta_framework import LinearLearner, IDBD, metrics_to_dicts
+from alberta_framework.streams.gymnasium import (
+    collect_trajectory, learn_from_trajectory, PredictionMode, make_random_policy
+)
+import gymnasium as gym
 
-# Create stream from CartPole
-stream = make_gymnasium_stream(
-    "CartPole-v1",
-    mode=PredictionMode.REWARD,
-    include_action_in_features=True,
+# Create environment and policy
+env = gym.make("CartPole-v1")
+policy = make_random_policy(env, seed=42)
+
+# Collect trajectory (Python loop for env interaction)
+observations, targets = collect_trajectory(
+    env, policy, num_steps=10000, mode=PredictionMode.REWARD
 )
 
-# Use with existing learners
+# Learn from trajectory (JIT-compiled scan)
 learner = LinearLearner(optimizer=IDBD())
-state, metrics = run_learning_loop(learner, stream, num_steps=10000)
+state, metrics = learn_from_trajectory(learner, observations, targets)
+metrics_list = metrics_to_dicts(metrics)
 ```
 
 ## Publication-Quality Analysis
@@ -194,6 +228,13 @@ results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 
 Documentation is built with MkDocs and mkdocstrings (auto-generated API docs from docstrings).
 
+### Local Preview
+```bash
+pip install -e ".[docs]"
+mkdocs serve          # Preview at http://localhost:8000
+mkdocs build          # Build static site to site/
+```
+
 ### Structure
 ```
 docs/
@@ -204,6 +245,9 @@ docs/
 └── gen_ref_pages.py         # Auto-generates API reference
 mkdocs.yml                   # MkDocs configuration
 ```
+
+### API Reference
+The API Reference section is auto-generated from docstrings in the source code. Every public class, method, and function is documented. The `gen_ref_pages.py` script scans all `.py` files and creates reference pages using mkdocstrings.
 
 ### Docstring Style
 Use NumPy-style docstrings for all public functions and classes. See `core/optimizers.py` for examples.
