@@ -26,6 +26,7 @@ Usage:
 """
 
 import jax.numpy as jnp
+import jax.random as jr
 from jax import Array
 
 from alberta_framework import IDBD, LinearLearner, run_learning_loop
@@ -56,13 +57,15 @@ def track_learning_rate_evolution(
         num_relevant=5,
         num_irrelevant=15,
         change_interval=20,
-        seed=seed,
     )
     learner = LinearLearner(
         optimizer=IDBD(initial_step_size=initial_alpha, meta_step_size=theta)
     )
 
-    state = learner.init(stream.feature_dim)
+    # Initialize stream and learner state
+    key = jr.key(seed)
+    stream_state = stream.init(key)
+    learner_state = learner.init(stream.feature_dim)
 
     history: dict[str, list] = {
         "steps": [],
@@ -73,7 +76,7 @@ def track_learning_rate_evolution(
     }
 
     # Record initial values
-    optimizer_state = state.optimizer_state
+    optimizer_state = learner_state.optimizer_state
     assert isinstance(optimizer_state, IDBDState)
     alphas = jnp.exp(optimizer_state.log_step_sizes)
     history["steps"].append(0)
@@ -82,16 +85,16 @@ def track_learning_rate_evolution(
     history["relevant_alpha_0"].append(float(alphas[0]))
     history["irrelevant_alpha_5"].append(float(alphas[5]))
 
-    for step, time_step in enumerate(stream):
-        if step >= num_steps:
-            break
+    for step in range(num_steps):
+        # Get next time step from stream
+        time_step, stream_state = stream.step(stream_state, jnp.array(step))
 
-        result = learner.update(state, time_step.observation, time_step.target)
-        state = result.state
+        result = learner.update(learner_state, time_step.observation, time_step.target)
+        learner_state = result.state
 
         # Record at intervals
         if (step + 1) % record_interval == 0:
-            optimizer_state = state.optimizer_state
+            optimizer_state = learner_state.optimizer_state
             assert isinstance(optimizer_state, IDBDState)
             alphas = jnp.exp(optimizer_state.log_step_sizes)
 
@@ -106,10 +109,12 @@ def track_learning_rate_evolution(
 
 def run_per_weight_lms(
     stream: SuttonExperiment1Stream,
+    stream_state: "SuttonExperiment1State",  # type: ignore  # noqa: F821
     relevant_alpha: float,
     irrelevant_alpha: float,
     num_steps: int,
-) -> tuple[Array, list[float]]:
+    initial_weights: Array | None = None,
+) -> tuple[Array, list[float], "SuttonExperiment1State"]:  # type: ignore  # noqa: F821
     """Run LMS with different learning rates for relevant vs irrelevant inputs.
 
     This implements a simple manual learning loop since the standard LMS
@@ -117,15 +122,17 @@ def run_per_weight_lms(
 
     Args:
         stream: Experience stream
+        stream_state: Current stream state
         relevant_alpha: Learning rate for first 5 (relevant) weights
         irrelevant_alpha: Learning rate for last 15 (irrelevant) weights
         num_steps: Number of steps to run
+        initial_weights: Optional initial weights (defaults to zeros)
 
     Returns:
-        Tuple of (final_weights, list of squared errors)
+        Tuple of (final_weights, list of squared errors, final stream state)
     """
     feature_dim = stream.feature_dim
-    weights = jnp.zeros(feature_dim, dtype=jnp.float32)
+    weights = initial_weights if initial_weights is not None else jnp.zeros(feature_dim, dtype=jnp.float32)
 
     # Per-weight learning rates
     alphas = jnp.concatenate([
@@ -135,9 +142,8 @@ def run_per_weight_lms(
 
     squared_errors = []
 
-    for step, time_step in enumerate(stream):
-        if step >= num_steps:
-            break
+    for step in range(num_steps):
+        time_step, stream_state = stream.step(stream_state, jnp.array(step))
 
         x = time_step.observation
         y_star = jnp.squeeze(time_step.target)
@@ -150,7 +156,7 @@ def run_per_weight_lms(
         # Update: w_i += alpha_i * error * x_i
         weights = weights + alphas * error * x
 
-    return weights, squared_errors
+    return weights, squared_errors, stream_state
 
 
 def run_optimal_alpha_search(
@@ -181,41 +187,11 @@ def run_optimal_alpha_search(
             num_relevant=5,
             num_irrelevant=15,
             change_interval=20,
-            seed=seed,
         )
 
-        # Burn-in phase
-        _, burn_in_errors = run_per_weight_lms(
-            stream,
-            relevant_alpha=alpha,
-            irrelevant_alpha=0.0,  # Fix irrelevant to 0
-            num_steps=burn_in_steps,
-        )
-
-        # Continue with same stream for measurement
-        # Need to continue from where burn-in left off
-        # The stream is already advanced, so just continue
-        stream_after_burnin = SuttonExperiment1Stream(
-            num_relevant=5,
-            num_irrelevant=15,
-            change_interval=20,
-            seed=seed,
-        )
-        # Advance stream past burn-in
-        for _ in range(burn_in_steps):
-            next(stream_after_burnin)
-
-        # Now run measurement phase with fresh weights but same stream state
-        # Actually, for proper measurement we need to continue with learned weights
-        # Let's recreate properly
-
-        # Run complete experiment in one go
-        stream = SuttonExperiment1Stream(
-            num_relevant=5,
-            num_irrelevant=15,
-            change_interval=20,
-            seed=seed,
-        )
+        # Initialize stream state
+        key = jr.key(seed)
+        stream_state = stream.init(key)
 
         feature_dim = stream.feature_dim
         weights = jnp.zeros(feature_dim, dtype=jnp.float32)
@@ -228,9 +204,8 @@ def run_optimal_alpha_search(
 
         measurement_errors = []
 
-        for step, time_step in enumerate(stream):
-            if step >= burn_in_steps + measurement_steps:
-                break
+        for step in range(burn_in_steps + measurement_steps):
+            time_step, stream_state = stream.step(stream_state, jnp.array(step))
 
             x = time_step.observation
             y_star = jnp.squeeze(time_step.target)
