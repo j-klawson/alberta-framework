@@ -25,7 +25,11 @@ Expected Results (from paper):
 
 Usage:
     python examples/sutton1992_experiment1.py
+    python examples/sutton1992_experiment1.py --output-dir output/
 """
+
+import argparse
+from pathlib import Path
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -257,8 +261,17 @@ def analyze_learning_rate_evolution(
     print("  Irrelevant inputs: < 0.007 (heading towards 0)")
 
 
-def main() -> None:
-    """Run the Sutton 1992 Experiment 1 replication."""
+def main(output_dir: str | None = None) -> None:
+    """Run the Sutton 1992 Experiment 1 replication.
+
+    Args:
+        output_dir: If provided, save plots to this directory instead of showing.
+    """
+    # Create output directory if specified
+    if output_dir:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
     print("=" * 70)
     print("Replication of Sutton (1992) Experiment 1: Does IDBD Help?")
     print("=" * 70)
@@ -314,8 +327,19 @@ def main() -> None:
     # Try to plot Figure 3
     print("\n" + "=" * 70)
     print("Generating Figure 3 replication...")
-    plot_figure3(lms_results, idbd_results)
+    fig3_path = str(output_path / "sutton1992_figure3.png") if output_dir else None
+    plot_figure3(lms_results, idbd_results, save_path=fig3_path)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Replication of Sutton 1992 Experiment 1"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to save plots (default: show interactively)",
+    )
+    args = parser.parse_args()
+    main(output_dir=args.output_dir)

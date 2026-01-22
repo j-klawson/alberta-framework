@@ -53,6 +53,11 @@ python "examples/The Alberta Plan/Step1/autostep_comparison.py"
 python "examples/The Alberta Plan/Step1/sutton1992_experiment1.py"
 python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py"
 
+# Save plots to output directory (instead of displaying interactively)
+python "examples/The Alberta Plan/Step1/idbd_vs_lms.py" --output-dir output/
+python "examples/The Alberta Plan/Step1/sutton1992_experiment1.py" --output-dir output/
+python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py" --output-dir output/
+
 # Run Gymnasium examples (requires gymnasium)
 python examples/gymnasium_reward_prediction.py
 

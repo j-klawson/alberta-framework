@@ -15,7 +15,11 @@ competitive with the best fixed LMS.
 
 Usage:
     python examples/step1_idbd_vs_lms.py
+    python examples/step1_idbd_vs_lms.py --output-dir output/
 """
+
+import argparse
+from pathlib import Path
 
 import jax.random as jr
 import numpy as np
@@ -283,8 +287,17 @@ def run_practical_comparison(
     print("=" * 70 + "\n")
 
 
-def main():
-    """Run the Step 1 demonstration."""
+def main(output_dir: str | None = None):
+    """Run the Step 1 demonstration.
+
+    Args:
+        output_dir: If provided, save plots to this directory instead of showing.
+    """
+    # Create output directory if specified
+    if output_dir:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
     print("Running Step 1 experiment: IDBD vs LMS comparison")
     print("This demonstrates meta-learned step-sizes vs manual tuning.\n")
 
@@ -303,8 +316,19 @@ def main():
     run_practical_comparison(initial_step_size=0.01)
 
     # Try to plot if matplotlib is available
-    plot_learning_curves(results)
+    save_path = str(output_path / "idbd_vs_lms.png") if output_dir else None
+    plot_learning_curves(results, save_path=save_path)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Step 1 Demonstration: IDBD vs LMS"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to save plots (default: show interactively)",
+    )
+    args = parser.parse_args()
+    main(output_dir=args.output_dir)

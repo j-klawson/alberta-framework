@@ -25,6 +25,9 @@ Usage:
     python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py"
 """
 
+import argparse
+from pathlib import Path
+
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
@@ -326,8 +329,17 @@ def plot_figure5(results: dict[float, float], optimal_alpha: float | None = None
         plt.show()
 
 
-def main() -> None:
-    """Run the Sutton 1992 Experiment 2 replication."""
+def main(output_dir: str | None = None) -> None:
+    """Run the Sutton 1992 Experiment 2 replication.
+
+    Args:
+        output_dir: If provided, save plots to this directory instead of showing.
+    """
+    # Create output directory if specified
+    if output_dir:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
     print("=" * 70)
     print("Replication of Sutton (1992) Experiment 2:")
     print("Does IDBD Find the Optimal alpha_i?")
@@ -411,9 +423,22 @@ def main() -> None:
     print("Generating Figures")
     print("-" * 70)
 
-    plot_figure4(history)
-    plot_figure5(results, optimal_alpha=final_relevant)
+    fig4_path = str(output_path / "sutton1992_figure4.png") if output_dir else None
+    fig5_path = str(output_path / "sutton1992_figure5.png") if output_dir else None
+
+    plot_figure4(history, save_path=fig4_path)
+    plot_figure5(results, optimal_alpha=final_relevant, save_path=fig5_path)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Replication of Sutton 1992 Experiment 2"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to save plots (default: show interactively)",
+    )
+    args = parser.parse_args()
+    main(output_dir=args.output_dir)
