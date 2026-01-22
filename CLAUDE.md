@@ -44,13 +44,14 @@ pip install -e ".[analysis]"
 # Run tests
 pytest tests/ -v
 
-# Run Step 1 demonstrations
-python examples/step1_idbd_vs_lms.py
-python examples/step1_normalization_study.py
-python examples/step1_autostep_comparison.py
+# Run Step 1 demonstrations (The Alberta Plan)
+python "examples/The Alberta Plan/Step1/idbd_vs_lms.py"
+python "examples/The Alberta Plan/Step1/normalization_study.py"
+python "examples/The Alberta Plan/Step1/autostep_comparison.py"
 
-# Run Sutton 1992 Experiment 1 replication
-python examples/sutton1992_experiment1.py
+# Run Sutton 1992 replications
+python "examples/The Alberta Plan/Step1/sutton1992_experiment1.py"
+python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py"
 
 # Run Gymnasium examples (requires gymnasium)
 python examples/gymnasium_reward_prediction.py
