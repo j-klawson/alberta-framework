@@ -25,6 +25,7 @@ import jax.random as jr
 import numpy as np
 
 from alberta_framework import (
+    AbruptChangeStream,
     Autostep,
     IDBD,
     LMS,
@@ -288,6 +289,129 @@ def run_practical_comparison(
     print("=" * 70 + "\n")
 
 
+def run_abrupt_change_experiment(
+    feature_dim: int = 10,
+    num_steps: int = 2100,
+    change_interval: int = 2000,
+    noise_std: float = 0.1,
+    seed: int = 42,
+) -> dict:
+    """Run experiment with abrupt target change to compare adaptation speed.
+
+    The experiment is configured so an abrupt change occurs near the end,
+    allowing us to visualize recovery in the final steps.
+
+    Args:
+        feature_dim: Dimension of feature vectors
+        num_steps: Number of learning steps
+        change_interval: Steps between abrupt weight changes
+        noise_std: Observation noise level
+        seed: Random seed for reproducibility
+
+    Returns:
+        Dictionary with results for each learner
+    """
+    results = {}
+
+    # Shared configuration
+    stream_kwargs = {
+        "feature_dim": feature_dim,
+        "change_interval": change_interval,
+        "noise_std": noise_std,
+    }
+
+    # LMS with various step-sizes
+    for alpha in [0.01, 0.02, 0.05]:
+        stream = AbruptChangeStream(**stream_kwargs)
+        learner = LinearLearner(optimizer=LMS(step_size=alpha))
+        key = jr.key(seed)
+        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+        results[f"LMS(α={alpha})"] = metrics_to_dicts(metrics)
+
+    # IDBD with moderate meta step-size
+    stream = AbruptChangeStream(**stream_kwargs)
+    learner = LinearLearner(
+        optimizer=IDBD(initial_step_size=0.02, meta_step_size=0.05)
+    )
+    key = jr.key(seed)
+    _, metrics = run_learning_loop(learner, stream, num_steps, key)
+    results["IDBD(α₀=0.02,β=0.05)"] = metrics_to_dicts(metrics)
+
+    # Autostep with moderate settings
+    stream = AbruptChangeStream(**stream_kwargs)
+    learner = LinearLearner(
+        optimizer=Autostep(initial_step_size=0.02, meta_step_size=0.05)
+    )
+    key = jr.key(seed)
+    _, metrics = run_learning_loop(learner, stream, num_steps, key)
+    results["Autostep(α₀=0.02,μ=0.05)"] = metrics_to_dicts(metrics)
+
+    return results
+
+
+def plot_abrupt_change_recovery(
+    results: dict,
+    last_n_steps: int = 100,
+    save_path: str | None = None,
+) -> None:
+    """Plot the last N steps after an abrupt change to show recovery.
+
+    Args:
+        results: Dictionary of metrics from run_abrupt_change_experiment
+        last_n_steps: Number of final steps to plot
+        save_path: If provided, save plot to this path instead of showing
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not installed, skipping plot")
+        return
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    colors = {"LMS": "blue", "IDBD": "green", "Autostep": "red"}
+
+    # Plot 1: Squared error over the last N steps
+    for name, metrics in results.items():
+        errors = [m["squared_error"] for m in metrics[-last_n_steps:]]
+        color = next((c for key, c in colors.items() if key in name), "gray")
+        ax1.plot(range(last_n_steps), errors, label=name, alpha=0.8, color=color)
+
+    ax1.set_xlabel("Steps After Abrupt Change")
+    ax1.set_ylabel("Squared Error")
+    ax1.set_title(f"Recovery After Abrupt Target Change (Last {last_n_steps} Steps)")
+    ax1.legend(loc="upper right")
+    ax1.grid(True, alpha=0.3)
+    ax1.set_yscale("log")
+
+    # Plot 2: Cumulative error over the last N steps (shows total cost of recovery)
+    for name, metrics in results.items():
+        errors = [m["squared_error"] for m in metrics[-last_n_steps:]]
+        cumulative = np.cumsum(errors)
+        color = next((c for key, c in colors.items() if key in name), "gray")
+        ax2.plot(range(last_n_steps), cumulative, label=name, alpha=0.8, color=color)
+
+    ax2.set_xlabel("Steps After Abrupt Change")
+    ax2.set_ylabel("Cumulative Squared Error")
+    ax2.set_title(f"Cumulative Error During Recovery (Last {last_n_steps} Steps)")
+    ax2.legend(loc="upper left")
+    ax2.grid(True, alpha=0.3)
+
+    # Add title
+    fig.suptitle(
+        "Recovery After Abrupt Target Change",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        print(f"Abrupt change plot saved to {save_path}")
+    else:
+        plt.show()
+
+
 def main(output_dir: str | None = None):
     """Run the Step 1 demonstration.
 
@@ -320,6 +444,57 @@ def main(output_dir: str | None = None):
         # Try to plot if matplotlib is available
         save_path = str(output_path / "idbd_vs_lms.png") if output_dir else None
         plot_learning_curves(results, save_path=save_path)
+
+        # Experiment 3: Abrupt change recovery comparison
+        print("\n" + "=" * 70)
+        print("ABRUPT CHANGE EXPERIMENT: Recovery After Target Shift")
+        print("=" * 70)
+        print("\nThis experiment shows how each method recovers after an abrupt")
+        print("target change at step 2000. The last 100 steps show recovery behavior.\n")
+
+        abrupt_results = run_abrupt_change_experiment(
+            feature_dim=10,
+            num_steps=2100,
+            change_interval=2000,
+            noise_std=0.1,
+            seed=42,
+        )
+
+        # Print recovery statistics
+        print(f"{'Method':<28} {'Last 100 Mean SE':>16} {'Last 100 Cumulative':>20}")
+        print("-" * 68)
+        stats = {}
+        for name, metrics in abrupt_results.items():
+            last_100 = [m["squared_error"] for m in metrics[-100:]]
+            mean_se = np.mean(last_100)
+            cumulative = np.sum(last_100)
+            stats[name] = cumulative
+            print(f"{name:<28} {mean_se:>16.4f} {cumulative:>20.2f}")
+
+        # Analyze results
+        print("\n" + "-" * 68)
+        best_method = min(stats, key=stats.get)
+        print(f"Best recovery: {best_method}")
+
+        # Compare adaptive methods to best LMS
+        lms_methods = {k: v for k, v in stats.items() if k.startswith("LMS")}
+        best_lms = min(lms_methods, key=lms_methods.get)
+        best_lms_error = lms_methods[best_lms]
+
+        for name, error in stats.items():
+            if not name.startswith("LMS"):
+                if error < best_lms_error:
+                    pct = (best_lms_error - error) / best_lms_error * 100
+                    print(f"{name} beats {best_lms} by {pct:.1f}%")
+                else:
+                    pct = (error - best_lms_error) / best_lms_error * 100
+                    print(f"{name} is {pct:.1f}% worse than {best_lms}")
+
+        print("=" * 70 + "\n")
+
+        # Plot abrupt change recovery
+        abrupt_save_path = str(output_path / "abrupt_change_recovery.png") if output_dir else None
+        plot_abrupt_change_recovery(abrupt_results, last_n_steps=100, save_path=abrupt_save_path)
 
 
 if __name__ == "__main__":
