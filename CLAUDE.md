@@ -27,7 +27,8 @@ src/alberta_framework/
     ├── experiments.py  # ExperimentConfig, run_multi_seed_experiment, AggregatedResults
     ├── statistics.py   # Statistical tests, CI, effect sizes (requires scipy)
     ├── visualization.py # Publication plots (requires matplotlib)
-    └── export.py       # CSV, JSON, LaTeX, Markdown export
+    ├── export.py       # CSV, JSON, LaTeX, Markdown export
+    └── timing.py       # Timer context manager, format_duration
 ```
 
 ### Key Commands
@@ -228,6 +229,19 @@ results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 - `generate_latex_table()`, `generate_markdown_table()`
 - `export_to_csv()`, `export_to_json()`
 - `save_experiment_report()`: Save all artifacts at once
+
+### Timing
+All example scripts report total runtime at completion using the `Timer` context manager:
+```python
+from alberta_framework import Timer
+
+with Timer("My experiment"):
+    # ... run experiment ...
+# Prints: "My experiment completed in 31.34s"
+```
+
+- `Timer(name, verbose=True)`: Context manager for timing code blocks
+- `format_duration(seconds)`: Format seconds as human-readable (e.g., "2m 30.50s")
 
 ## Documentation
 

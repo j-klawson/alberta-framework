@@ -32,7 +32,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 
-from alberta_framework import IDBD, LinearLearner, run_learning_loop
+from alberta_framework import IDBD, LinearLearner, Timer, run_learning_loop
 from alberta_framework.core.types import IDBDState, TimeStep
 from alberta_framework.streams.synthetic import SuttonExperiment1Stream
 
@@ -335,99 +335,100 @@ def main(output_dir: str | None = None) -> None:
     Args:
         output_dir: If provided, save plots to this directory instead of showing.
     """
-    # Create output directory if specified
-    if output_dir:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+    with Timer("Total experiment runtime"):
+        # Create output directory if specified
+        if output_dir:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-    print("=" * 70)
-    print("Replication of Sutton (1992) Experiment 2:")
-    print("Does IDBD Find the Optimal alpha_i?")
-    print("=" * 70)
+        print("=" * 70)
+        print("Replication of Sutton (1992) Experiment 2:")
+        print("Does IDBD Find the Optimal alpha_i?")
+        print("=" * 70)
 
-    # ========================================================================
-    # Part 1: Track learning rate evolution (Figure 4)
-    # ========================================================================
-    print("\n" + "-" * 70)
-    print("Part 1: Learning Rate Evolution (Figure 4)")
-    print("-" * 70)
-    print("Running IDBD with theta=0.001 for 250,000 steps...")
-    print("This demonstrates how IDBD adapts per-weight learning rates.")
-    print()
+        # ========================================================================
+        # Part 1: Track learning rate evolution (Figure 4)
+        # ========================================================================
+        print("\n" + "-" * 70)
+        print("Part 1: Learning Rate Evolution (Figure 4)")
+        print("-" * 70)
+        print("Running IDBD with theta=0.001 for 250,000 steps...")
+        print("This demonstrates how IDBD adapts per-weight learning rates.")
+        print()
 
-    history = track_learning_rate_evolution(
-        theta=0.001,
-        initial_alpha=0.05,
-        num_steps=250000,
-        record_interval=1000,
-        seed=42,
-    )
+        history = track_learning_rate_evolution(
+            theta=0.001,
+            initial_alpha=0.05,
+            num_steps=250000,
+            record_interval=1000,
+            seed=42,
+        )
 
-    final_relevant = history["relevant_alphas"][-1]
-    final_irrelevant = history["irrelevant_alphas"][-1]
+        final_relevant = history["relevant_alphas"][-1]
+        final_irrelevant = history["irrelevant_alphas"][-1]
 
-    print(f"Initial learning rate: 0.05 (all weights)")
-    print(f"\nFinal learning rates after 250,000 steps:")
-    print(f"  Relevant inputs (mean):   {final_relevant:.4f}")
-    print(f"  Irrelevant inputs (mean): {final_irrelevant:.6f}")
-    print(f"\nPaper reports:")
-    print(f"  Relevant inputs:   ~0.13")
-    print(f"  Irrelevant inputs: <0.007 (heading towards 0)")
+        print(f"Initial learning rate: 0.05 (all weights)")
+        print(f"\nFinal learning rates after 250,000 steps:")
+        print(f"  Relevant inputs (mean):   {final_relevant:.4f}")
+        print(f"  Irrelevant inputs (mean): {final_irrelevant:.6f}")
+        print(f"\nPaper reports:")
+        print(f"  Relevant inputs:   ~0.13")
+        print(f"  Irrelevant inputs: <0.007 (heading towards 0)")
 
-    if final_relevant > 0.1 and final_irrelevant < 0.01:
-        print("\nSUCCESS: Learning rates evolved as expected!")
-    else:
-        print("\nNote: Results differ from paper - may need parameter tuning")
+        if final_relevant > 0.1 and final_irrelevant < 0.01:
+            print("\nSUCCESS: Learning rates evolved as expected!")
+        else:
+            print("\nNote: Results differ from paper - may need parameter tuning")
 
-    # ========================================================================
-    # Part 2: Verify optimality via grid search (Figure 5)
-    # ========================================================================
-    print("\n" + "-" * 70)
-    print("Part 2: Optimal Learning Rate Search (Figure 5)")
-    print("-" * 70)
-    print("Running grid search over learning rates for relevant inputs...")
-    print("(Irrelevant input learning rates fixed to 0)")
-    print()
+        # ========================================================================
+        # Part 2: Verify optimality via grid search (Figure 5)
+        # ========================================================================
+        print("\n" + "-" * 70)
+        print("Part 2: Optimal Learning Rate Search (Figure 5)")
+        print("-" * 70)
+        print("Running grid search over learning rates for relevant inputs...")
+        print("(Irrelevant input learning rates fixed to 0)")
+        print()
 
-    # Grid of learning rates similar to paper's range
-    alphas = [0.05, 0.07, 0.09, 0.11, 0.13, 0.15, 0.17, 0.19, 0.21, 0.23, 0.25]
+        # Grid of learning rates similar to paper's range
+        alphas = [0.05, 0.07, 0.09, 0.11, 0.13, 0.15, 0.17, 0.19, 0.21, 0.23, 0.25]
 
-    results = run_optimal_alpha_search(
-        alphas=alphas,
-        burn_in_steps=20000,
-        measurement_steps=10000,
-        seed=42,
-    )
+        results = run_optimal_alpha_search(
+            alphas=alphas,
+            burn_in_steps=20000,
+            measurement_steps=10000,
+            seed=42,
+        )
 
-    # Find optimal
-    min_alpha = min(results, key=results.get)  # type: ignore
-    min_mse = results[min_alpha]
+        # Find optimal
+        min_alpha = min(results, key=results.get)  # type: ignore
+        min_mse = results[min_alpha]
 
-    print(f"\nGrid search results:")
-    print(f"  Optimal alpha: {min_alpha:.3f}")
-    print(f"  Minimum MSE:   {min_mse:.4f}")
-    print(f"\nIDDB converged to: {final_relevant:.3f}")
-    print(f"Paper reports optimal: ~0.13")
+        print(f"\nGrid search results:")
+        print(f"  Optimal alpha: {min_alpha:.3f}")
+        print(f"  Minimum MSE:   {min_mse:.4f}")
+        print(f"\nIDDB converged to: {final_relevant:.3f}")
+        print(f"Paper reports optimal: ~0.13")
 
-    # Check if IDBD found near-optimal
-    if abs(final_relevant - min_alpha) < 0.03:
-        print("\nSUCCESS: IDBD found near-optimal learning rate!")
-    else:
-        print(f"\nNote: IDBD alpha ({final_relevant:.3f}) differs from grid search "
-              f"optimal ({min_alpha:.3f})")
+        # Check if IDBD found near-optimal
+        if abs(final_relevant - min_alpha) < 0.03:
+            print("\nSUCCESS: IDBD found near-optimal learning rate!")
+        else:
+            print(f"\nNote: IDBD alpha ({final_relevant:.3f}) differs from grid search "
+                  f"optimal ({min_alpha:.3f})")
 
-    # ========================================================================
-    # Generate plots
-    # ========================================================================
-    print("\n" + "-" * 70)
-    print("Generating Figures")
-    print("-" * 70)
+        # ========================================================================
+        # Generate plots
+        # ========================================================================
+        print("\n" + "-" * 70)
+        print("Generating Figures")
+        print("-" * 70)
 
-    fig4_path = str(output_path / "sutton1992_figure4.png") if output_dir else None
-    fig5_path = str(output_path / "sutton1992_figure5.png") if output_dir else None
+        fig4_path = str(output_path / "sutton1992_figure4.png") if output_dir else None
+        fig5_path = str(output_path / "sutton1992_figure5.png") if output_dir else None
 
-    plot_figure4(history, save_path=fig4_path)
-    plot_figure5(results, optimal_alpha=final_relevant, save_path=fig5_path)
+        plot_figure4(history, save_path=fig4_path)
+        plot_figure5(results, optimal_alpha=final_relevant, save_path=fig5_path)
 
 
 if __name__ == "__main__":

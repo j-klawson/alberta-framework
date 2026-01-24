@@ -24,6 +24,7 @@ from alberta_framework import (
     IDBD,
     LinearLearner,
     NormalizedLinearLearner,
+    Timer,
     compare_learners,
     metrics_to_dicts,
     run_learning_loop,
@@ -245,19 +246,20 @@ def run_scale_sensitivity_study(
 
 def main():
     """Run the normalization study."""
-    print("Running Step 1 Normalization Study")
-    print("This demonstrates the benefit of online feature normalization.\n")
+    with Timer("Total experiment runtime"):
+        print("Running Step 1 Normalization Study")
+        print("This demonstrates the benefit of online feature normalization.\n")
 
-    # Main experiment
-    results = run_normalization_experiment(
-        feature_dim=10,
-        num_steps=10000,
-        seed=42,
-    )
-    print_results(results)
+        # Main experiment
+        results = run_normalization_experiment(
+            feature_dim=10,
+            num_steps=10000,
+            seed=42,
+        )
+        print_results(results)
 
-    # Scale sensitivity study
-    run_scale_sensitivity_study()
+        # Scale sensitivity study
+        run_scale_sensitivity_study()
 
 
 if __name__ == "__main__":

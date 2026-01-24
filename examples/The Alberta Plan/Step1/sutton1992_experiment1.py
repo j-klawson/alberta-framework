@@ -34,7 +34,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import jax.random as jr
 
-from alberta_framework import IDBD, LMS, LinearLearner, run_learning_loop, metrics_to_dicts
+from alberta_framework import IDBD, LMS, LinearLearner, Timer, run_learning_loop, metrics_to_dicts
 from alberta_framework.streams.synthetic import SuttonExperiment1Stream
 
 
@@ -267,68 +267,69 @@ def main(output_dir: str | None = None) -> None:
     Args:
         output_dir: If provided, save plots to this directory instead of showing.
     """
-    # Create output directory if specified
-    if output_dir:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+    with Timer("Total experiment runtime"):
+        # Create output directory if specified
+        if output_dir:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-    print("=" * 70)
-    print("Replication of Sutton (1992) Experiment 1: Does IDBD Help?")
-    print("=" * 70)
-    print("\nExperiment setup:")
-    print("  - 20 inputs: 5 relevant (weights +/-1), 15 irrelevant (weights 0)")
-    print("  - Sign flip every 20 examples")
-    print("  - 20,000 burn-in steps, 10,000 measurement steps")
-    print()
+        print("=" * 70)
+        print("Replication of Sutton (1992) Experiment 1: Does IDBD Help?")
+        print("=" * 70)
+        print("\nExperiment setup:")
+        print("  - 20 inputs: 5 relevant (weights +/-1), 15 irrelevant (weights 0)")
+        print("  - Sign flip every 20 examples")
+        print("  - 20,000 burn-in steps, 10,000 measurement steps")
+        print()
 
-    # LMS step-sizes to sweep (similar to paper's range)
-    # Paper shows alpha from ~0 to ~0.08
-    lms_alphas = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+        # LMS step-sizes to sweep (similar to paper's range)
+        # Paper shows alpha from ~0 to ~0.08
+        lms_alphas = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
 
-    # IDBD meta-step-sizes to sweep (similar to paper's range)
-    # Paper shows theta from ~0 to ~0.02
-    idbd_thetas = [0.001, 0.002, 0.005, 0.007, 0.01, 0.012, 0.015, 0.017, 0.02]
+        # IDBD meta-step-sizes to sweep (similar to paper's range)
+        # Paper shows theta from ~0 to ~0.02
+        idbd_thetas = [0.001, 0.002, 0.005, 0.007, 0.01, 0.012, 0.015, 0.017, 0.02]
 
-    print("Running LMS sweep...")
-    lms_results = run_lms_sweep(lms_alphas, seed=42)
+        print("Running LMS sweep...")
+        lms_results = run_lms_sweep(lms_alphas, seed=42)
 
-    print("\nRunning IDBD sweep...")
-    idbd_results = run_idbd_sweep(idbd_thetas, initial_alpha=0.05, seed=42)
+        print("\nRunning IDBD sweep...")
+        idbd_results = run_idbd_sweep(idbd_thetas, initial_alpha=0.05, seed=42)
 
-    # Analysis
-    print("\n" + "=" * 70)
-    print("RESULTS SUMMARY")
-    print("=" * 70)
+        # Analysis
+        print("\n" + "=" * 70)
+        print("RESULTS SUMMARY")
+        print("=" * 70)
 
-    # Find best parameters by sorting by MSE
-    lms_sorted = sorted(lms_results.items(), key=lambda x: x[1])
-    best_lms_alpha, best_lms_mse = lms_sorted[0]
+        # Find best parameters by sorting by MSE
+        lms_sorted = sorted(lms_results.items(), key=lambda x: x[1])
+        best_lms_alpha, best_lms_mse = lms_sorted[0]
 
-    idbd_sorted = sorted(idbd_results.items(), key=lambda x: x[1])
-    best_idbd_theta, best_idbd_mse = idbd_sorted[0]
+        idbd_sorted = sorted(idbd_results.items(), key=lambda x: x[1])
+        best_idbd_theta, best_idbd_mse = idbd_sorted[0]
 
-    print(f"\nBest LMS:  alpha={best_lms_alpha:.4f}, MSE={best_lms_mse:.4f}")
-    print(f"Best IDBD: theta={best_idbd_theta:.4f}, MSE={best_idbd_mse:.4f}")
+        print(f"\nBest LMS:  alpha={best_lms_alpha:.4f}, MSE={best_lms_mse:.4f}")
+        print(f"Best IDBD: theta={best_idbd_theta:.4f}, MSE={best_idbd_mse:.4f}")
 
-    if best_idbd_mse < best_lms_mse:
-        improvement = (best_lms_mse - best_idbd_mse) / best_lms_mse * 100
-        print(f"\nIDDB outperforms best LMS by {improvement:.1f}%")
+        if best_idbd_mse < best_lms_mse:
+            improvement = (best_lms_mse - best_idbd_mse) / best_lms_mse * 100
+            print(f"\nIDDB outperforms best LMS by {improvement:.1f}%")
 
-        if best_idbd_mse < best_lms_mse * 0.5:
-            print("SUCCESS: IDBD achieves less than half the error of best LMS!")
-            print("(Paper reports IDBD MSE ~1.5 vs LMS MSE ~3.5)")
-    else:
-        print("\nNote: IDBD did not outperform best LMS in this run")
-        print("Consider adjusting parameters or running longer")
+            if best_idbd_mse < best_lms_mse * 0.5:
+                print("SUCCESS: IDBD achieves less than half the error of best LMS!")
+                print("(Paper reports IDBD MSE ~1.5 vs LMS MSE ~3.5)")
+        else:
+            print("\nNote: IDBD did not outperform best LMS in this run")
+            print("Consider adjusting parameters or running longer")
 
-    # Run learning rate evolution analysis
-    analyze_learning_rate_evolution(theta=0.001, num_steps=50000, seed=42)
+        # Run learning rate evolution analysis
+        analyze_learning_rate_evolution(theta=0.001, num_steps=50000, seed=42)
 
-    # Try to plot Figure 3
-    print("\n" + "=" * 70)
-    print("Generating Figure 3 replication...")
-    fig3_path = str(output_path / "sutton1992_figure3.png") if output_dir else None
-    plot_figure3(lms_results, idbd_results, save_path=fig3_path)
+        # Try to plot Figure 3
+        print("\n" + "=" * 70)
+        print("Generating Figure 3 replication...")
+        fig3_path = str(output_path / "sutton1992_figure3.png") if output_dir else None
+        plot_figure3(lms_results, idbd_results, save_path=fig3_path)
 
 
 if __name__ == "__main__":

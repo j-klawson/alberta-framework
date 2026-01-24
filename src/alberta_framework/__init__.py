@@ -84,6 +84,7 @@ from alberta_framework.utils.metrics import (
     compute_tracking_error,
     extract_metric,
 )
+from alberta_framework.utils.timing import Timer, format_duration
 
 # Gymnasium streams (optional)
 try:
@@ -154,6 +155,9 @@ __all__ = [
     "compute_running_mean",
     "compute_tracking_error",
     "extract_metric",
+    # Timing
+    "Timer",
+    "format_duration",
 ]
 
 # Add Gymnasium exports if available

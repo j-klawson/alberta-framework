@@ -22,7 +22,7 @@ except ImportError:
         "Install it with: pip install gymnasium"
     )
 
-from alberta_framework import IDBD, LMS, LinearLearner, compare_learners
+from alberta_framework import IDBD, LMS, LinearLearner, Timer, compare_learners
 from alberta_framework.streams.gymnasium import (
     GymnasiumStream,
     PredictionMode,
@@ -235,24 +235,25 @@ def demo_stream_usage():
 
 def main():
     """Run the Gymnasium reward prediction example."""
-    print("Gymnasium Reward Prediction Example")
-    print("Comparing IDBD vs LMS on CartPole reward prediction\n")
+    with Timer("Total experiment runtime"):
+        print("Gymnasium Reward Prediction Example")
+        print("Comparing IDBD vs LMS on CartPole reward prediction\n")
 
-    # Demo basic stream usage
-    demo_stream_usage()
+        # Demo basic stream usage
+        demo_stream_usage()
 
-    # Run main experiment
-    env_id = "CartPole-v1"
-    results = run_reward_prediction_experiment(
-        env_id=env_id,
-        num_steps=10000,
-        seed=42,
-    )
+        # Run main experiment
+        env_id = "CartPole-v1"
+        results = run_reward_prediction_experiment(
+            env_id=env_id,
+            num_steps=10000,
+            seed=42,
+        )
 
-    print_results(results, env_id)
+        print_results(results, env_id)
 
-    # Try to plot if matplotlib is available
-    plot_learning_curves(results, env_id)
+        # Try to plot if matplotlib is available
+        plot_learning_curves(results, env_id)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from alberta_framework import (
     LMS,
     LinearLearner,
     RandomWalkStream,
+    Timer,
     compare_learners,
     compute_tracking_error,
     metrics_to_dicts,
@@ -293,31 +294,32 @@ def main(output_dir: str | None = None):
     Args:
         output_dir: If provided, save plots to this directory instead of showing.
     """
-    # Create output directory if specified
-    if output_dir:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+    with Timer("Total experiment runtime"):
+        # Create output directory if specified
+        if output_dir:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-    print("Running Step 1 experiment: IDBD vs LMS comparison")
-    print("This demonstrates meta-learned step-sizes vs manual tuning.\n")
+        print("Running Step 1 experiment: IDBD vs LMS comparison")
+        print("This demonstrates meta-learned step-sizes vs manual tuning.\n")
 
-    # Experiment 1: Grid search comparison
-    results = run_experiment(
-        feature_dim=10,
-        num_steps=10000,
-        drift_rate=0.001,
-        noise_std=0.1,
-        seed=42,
-    )
+        # Experiment 1: Grid search comparison
+        results = run_experiment(
+            feature_dim=10,
+            num_steps=10000,
+            drift_rate=0.001,
+            noise_std=0.1,
+            seed=42,
+        )
 
-    print_results(results)
+        print_results(results)
 
-    # Experiment 2: Practical comparison - same starting step-size
-    run_practical_comparison(initial_step_size=0.01)
+        # Experiment 2: Practical comparison - same starting step-size
+        run_practical_comparison(initial_step_size=0.01)
 
-    # Try to plot if matplotlib is available
-    save_path = str(output_path / "idbd_vs_lms.png") if output_dir else None
-    plot_learning_curves(results, save_path=save_path)
+        # Try to plot if matplotlib is available
+        save_path = str(output_path / "idbd_vs_lms.png") if output_dir else None
+        plot_learning_curves(results, save_path=save_path)
 
 
 if __name__ == "__main__":

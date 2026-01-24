@@ -26,6 +26,7 @@ from alberta_framework import (
     LMS,
     LinearLearner,
     RandomWalkStream,
+    Timer,
     metrics_to_dicts,
     run_learning_loop,
 )
@@ -84,149 +85,150 @@ def create_configs() -> list[ExperimentConfig]:
 
 def main() -> None:
     """Run the publication experiment."""
-    print("Publication-Quality Experiment")
-    print("=" * 60)
-
-    # Create output directory
-    output_dir = Path("output/publication_experiment")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create experiment configurations
-    configs = create_configs()
-    print(f"\nRunning {len(configs)} configurations across 30 seeds...")
-
-    # Run experiments
-    results = run_multi_seed_experiment(
-        configs,
-        seeds=30,
-        parallel=True,
-        show_progress=True,
-    )
-
-    print("\nExperiment complete!")
-
-    # Print summary
-    print("\n" + "=" * 60)
-    print("RESULTS SUMMARY")
-    print("=" * 60)
-
-    performance = get_final_performance(results, metric="squared_error")
-    print(f"\n{'Method':<15} {'Mean Error':>15} {'Std':>15}")
-    print("-" * 45)
-    for name, (mean, std) in sorted(performance.items(), key=lambda x: x[1][0]):
-        print(f"{name:<15} {mean:>15.6f} {std:>15.6f}")
-
-    # Statistical analysis (requires scipy)
-    significance_results = None
-    try:
-        from alberta_framework.utils import pairwise_comparisons
-
-        print("\n" + "=" * 60)
-        print("STATISTICAL ANALYSIS")
+    with Timer("Total experiment runtime"):
+        print("Publication-Quality Experiment")
         print("=" * 60)
 
-        significance_results = pairwise_comparisons(
-            results,
-            metric="squared_error",
-            test="ttest",
-            correction="bonferroni",
+        # Create output directory
+        output_dir = Path("output/publication_experiment")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create experiment configurations
+        configs = create_configs()
+        print(f"\nRunning {len(configs)} configurations across 30 seeds...")
+
+        # Run experiments
+        results = run_multi_seed_experiment(
+            configs,
+            seeds=30,
+            parallel=True,
+            show_progress=True,
         )
 
-        print("\nPairwise Comparisons (paired t-test with Bonferroni correction):")
-        print(f"\n{'Comparison':<30} {'p-value':>12} {'Effect Size':>12} {'Sig.':>8}")
-        print("-" * 65)
-        for (name_a, name_b), result in significance_results.items():
-            sig = "Yes" if result.significant else "No"
-            print(
-                f"{name_a} vs {name_b:<15} {result.p_value:>12.4f} "
-                f"{result.effect_size:>12.3f} {sig:>8}"
+        print("\nExperiment complete!")
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("RESULTS SUMMARY")
+        print("=" * 60)
+
+        performance = get_final_performance(results, metric="squared_error")
+        print(f"\n{'Method':<15} {'Mean Error':>15} {'Std':>15}")
+        print("-" * 45)
+        for name, (mean, std) in sorted(performance.items(), key=lambda x: x[1][0]):
+            print(f"{name:<15} {mean:>15.6f} {std:>15.6f}")
+
+        # Statistical analysis (requires scipy)
+        significance_results = None
+        try:
+            from alberta_framework.utils import pairwise_comparisons
+
+            print("\n" + "=" * 60)
+            print("STATISTICAL ANALYSIS")
+            print("=" * 60)
+
+            significance_results = pairwise_comparisons(
+                results,
+                metric="squared_error",
+                test="ttest",
+                correction="bonferroni",
             )
-    except ImportError:
-        print("\nNote: Install scipy for statistical analysis: pip install scipy")
 
-    # Generate outputs
-    print("\n" + "=" * 60)
-    print("GENERATING OUTPUTS")
-    print("=" * 60)
+            print("\nPairwise Comparisons (paired t-test with Bonferroni correction):")
+            print(f"\n{'Comparison':<30} {'p-value':>12} {'Effect Size':>12} {'Sig.':>8}")
+            print("-" * 65)
+            for (name_a, name_b), result in significance_results.items():
+                sig = "Yes" if result.significant else "No"
+                print(
+                    f"{name_a} vs {name_b:<15} {result.p_value:>12.4f} "
+                    f"{result.effect_size:>12.3f} {sig:>8}"
+                )
+        except ImportError:
+            print("\nNote: Install scipy for statistical analysis: pip install scipy")
 
-    # Save experiment report (CSV, JSON, LaTeX, markdown)
-    artifacts = save_experiment_report(
-        results,
-        output_dir,
-        "comparison",
-        significance_results=significance_results,
-        metric="squared_error",
-    )
-
-    print("\nGenerated files:")
-    for artifact_type, path in artifacts.items():
-        print(f"  - {artifact_type}: {path}")
-
-    # Export full JSON with timeseries
-    json_full_path = output_dir / "comparison_full.json"
-    export_to_json(results, json_full_path, include_timeseries=True)
-    print(f"  - full_json: {json_full_path}")
-
-    # Print LaTeX table
-    print("\n" + "=" * 60)
-    print("LATEX TABLE")
-    print("=" * 60)
-    latex = generate_latex_table(
-        results,
-        significance_results=significance_results,
-        metric="squared_error",
-        caption="Comparison of LMS, IDBD, and Autostep on Random Walk Target",
-        label="tab:comparison",
-    )
-    print(latex)
-
-    # Print markdown table
-    print("\n" + "=" * 60)
-    print("MARKDOWN TABLE")
-    print("=" * 60)
-    markdown = generate_markdown_table(
-        results,
-        significance_results=significance_results,
-        metric="squared_error",
-    )
-    print(markdown)
-
-    # Generate figures (requires matplotlib)
-    try:
-        from alberta_framework.utils import (
-            create_comparison_figure,
-            plot_learning_curves,
-            save_figure,
-            set_publication_style,
-        )
-
+        # Generate outputs
         print("\n" + "=" * 60)
-        print("GENERATING FIGURES")
+        print("GENERATING OUTPUTS")
         print("=" * 60)
 
-        set_publication_style(font_size=10, use_latex=False)
+        # Save experiment report (CSV, JSON, LaTeX, markdown)
+        artifacts = save_experiment_report(
+            results,
+            output_dir,
+            "comparison",
+            significance_results=significance_results,
+            metric="squared_error",
+        )
 
-        # Learning curves figure
-        fig, ax = plot_learning_curves(results, metric="squared_error", show_ci=True)
-        ax.set_title("Learning Curves on Random Walk Target")
-        paths = save_figure(fig, output_dir / "learning_curves", formats=["pdf", "png"])
-        print(f"Saved learning curves: {[str(p) for p in paths]}")
+        print("\nGenerated files:")
+        for artifact_type, path in artifacts.items():
+            print(f"  - {artifact_type}: {path}")
 
-        # Multi-panel comparison figure
-        fig = create_comparison_figure(
+        # Export full JSON with timeseries
+        json_full_path = output_dir / "comparison_full.json"
+        export_to_json(results, json_full_path, include_timeseries=True)
+        print(f"  - full_json: {json_full_path}")
+
+        # Print LaTeX table
+        print("\n" + "=" * 60)
+        print("LATEX TABLE")
+        print("=" * 60)
+        latex = generate_latex_table(
+            results,
+            significance_results=significance_results,
+            metric="squared_error",
+            caption="Comparison of LMS, IDBD, and Autostep on Random Walk Target",
+            label="tab:comparison",
+        )
+        print(latex)
+
+        # Print markdown table
+        print("\n" + "=" * 60)
+        print("MARKDOWN TABLE")
+        print("=" * 60)
+        markdown = generate_markdown_table(
             results,
             significance_results=significance_results,
             metric="squared_error",
         )
-        paths = save_figure(fig, output_dir / "comparison", formats=["pdf", "png"])
-        print(f"Saved comparison figure: {[str(p) for p in paths]}")
+        print(markdown)
 
-    except ImportError:
-        print("\nNote: Install matplotlib for figures: pip install matplotlib")
+        # Generate figures (requires matplotlib)
+        try:
+            from alberta_framework.utils import (
+                create_comparison_figure,
+                plot_learning_curves,
+                save_figure,
+                set_publication_style,
+            )
 
-    print("\n" + "=" * 60)
-    print(f"All outputs saved to: {output_dir}")
-    print("=" * 60)
+            print("\n" + "=" * 60)
+            print("GENERATING FIGURES")
+            print("=" * 60)
+
+            set_publication_style(font_size=10, use_latex=False)
+
+            # Learning curves figure
+            fig, ax = plot_learning_curves(results, metric="squared_error", show_ci=True)
+            ax.set_title("Learning Curves on Random Walk Target")
+            paths = save_figure(fig, output_dir / "learning_curves", formats=["pdf", "png"])
+            print(f"Saved learning curves: {[str(p) for p in paths]}")
+
+            # Multi-panel comparison figure
+            fig = create_comparison_figure(
+                results,
+                significance_results=significance_results,
+                metric="squared_error",
+            )
+            paths = save_figure(fig, output_dir / "comparison", formats=["pdf", "png"])
+            print(f"Saved comparison figure: {[str(p) for p in paths]}")
+
+        except ImportError:
+            print("\nNote: Install matplotlib for figures: pip install matplotlib")
+
+        print("\n" + "=" * 60)
+        print(f"All outputs saved to: {output_dir}")
+        print("=" * 60)
 
 
 if __name__ == "__main__":
