@@ -708,6 +708,286 @@ def make_scale_range(
         return jnp.linspace(min_scale, max_scale, feature_dim, dtype=jnp.float32)
 
 
+class DynamicScaleShiftState(NamedTuple):
+    """State for DynamicScaleShiftStream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        true_weights: Current true target weights
+        current_scales: Current per-feature scaling factors
+        step_count: Number of steps taken
+    """
+
+    key: Array
+    true_weights: Array
+    current_scales: Array
+    step_count: Array
+
+
+class DynamicScaleShiftStream:
+    """Non-stationary stream with abruptly changing feature scales.
+
+    Both target weights AND feature scales change at specified intervals.
+    This tests whether OnlineNormalizer can track scale shifts faster
+    than Autostep's internal v_i adaptation.
+
+    The target is computed from unscaled features to maintain consistent
+    difficulty across scale changes (only the feature representation changes,
+    not the underlying prediction task).
+
+    Attributes:
+        feature_dim: Dimension of observation vectors
+        scale_change_interval: Steps between scale changes
+        weight_change_interval: Steps between weight changes
+        min_scale: Minimum scale factor
+        max_scale: Maximum scale factor
+        noise_std: Standard deviation of observation noise
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        scale_change_interval: int = 2000,
+        weight_change_interval: int = 1000,
+        min_scale: float = 0.01,
+        max_scale: float = 100.0,
+        noise_std: float = 0.1,
+    ):
+        """Initialize the dynamic scale shift stream.
+
+        Args:
+            feature_dim: Dimension of feature vectors
+            scale_change_interval: Steps between abrupt scale changes
+            weight_change_interval: Steps between abrupt weight changes
+            min_scale: Minimum scale factor (log-uniform sampling)
+            max_scale: Maximum scale factor (log-uniform sampling)
+            noise_std: Std dev of target noise
+        """
+        self._feature_dim = feature_dim
+        self._scale_change_interval = scale_change_interval
+        self._weight_change_interval = weight_change_interval
+        self._min_scale = min_scale
+        self._max_scale = max_scale
+        self._noise_std = noise_std
+
+    @property
+    def feature_dim(self) -> int:
+        """Return the dimension of observation vectors."""
+        return self._feature_dim
+
+    def init(self, key: Array) -> DynamicScaleShiftState:
+        """Initialize stream state.
+
+        Args:
+            key: JAX random key
+
+        Returns:
+            Initial stream state with random weights and scales
+        """
+        key, k_weights, k_scales = jr.split(key, 3)
+        weights = jr.normal(k_weights, (self._feature_dim,), dtype=jnp.float32)
+        # Initial scales: log-uniform between min and max
+        log_scales = jr.uniform(
+            k_scales,
+            (self._feature_dim,),
+            minval=jnp.log(self._min_scale),
+            maxval=jnp.log(self._max_scale),
+        )
+        scales = jnp.exp(log_scales).astype(jnp.float32)
+        return DynamicScaleShiftState(
+            key=key,
+            true_weights=weights,
+            current_scales=scales,
+            step_count=jnp.array(0, dtype=jnp.int32),
+        )
+
+    def step(
+        self, state: DynamicScaleShiftState, idx: Array
+    ) -> tuple[TimeStep, DynamicScaleShiftState]:
+        """Generate one time step.
+
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
+
+        Returns:
+            Tuple of (timestep, new_state)
+        """
+        del idx  # unused
+        key, k_weights, k_scales, k_x, k_noise = jr.split(state.key, 5)
+
+        # Check if scales should change
+        should_change_scales = state.step_count % self._scale_change_interval == 0
+        new_log_scales = jr.uniform(
+            k_scales,
+            (self._feature_dim,),
+            minval=jnp.log(self._min_scale),
+            maxval=jnp.log(self._max_scale),
+        )
+        new_random_scales = jnp.exp(new_log_scales).astype(jnp.float32)
+        new_scales = jnp.where(should_change_scales, new_random_scales, state.current_scales)
+
+        # Check if weights should change
+        should_change_weights = state.step_count % self._weight_change_interval == 0
+        new_random_weights = jr.normal(k_weights, (self._feature_dim,), dtype=jnp.float32)
+        new_weights = jnp.where(should_change_weights, new_random_weights, state.true_weights)
+
+        # Generate raw features (unscaled)
+        raw_x = jr.normal(k_x, (self._feature_dim,), dtype=jnp.float32)
+
+        # Apply scaling to observation
+        x = raw_x * new_scales
+
+        # Target from true weights using RAW features (for consistent difficulty)
+        noise = self._noise_std * jr.normal(k_noise, (), dtype=jnp.float32)
+        target = jnp.dot(new_weights, raw_x) + noise
+
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = DynamicScaleShiftState(
+            key=key,
+            true_weights=new_weights,
+            current_scales=new_scales,
+            step_count=state.step_count + 1,
+        )
+        return timestep, new_state
+
+
+class ScaleDriftState(NamedTuple):
+    """State for ScaleDriftStream.
+
+    Attributes:
+        key: JAX random key for generating randomness
+        true_weights: Current true target weights
+        log_scales: Current log-scale factors (random walk on log-scale)
+        step_count: Number of steps taken
+    """
+
+    key: Array
+    true_weights: Array
+    log_scales: Array
+    step_count: Array
+
+
+class ScaleDriftStream:
+    """Non-stationary stream where feature scales drift via random walk.
+
+    Both target weights and feature scales drift continuously. Weights drift
+    in linear space while scales drift in log-space (bounded random walk).
+    This tests continuous scale tracking where OnlineNormalizer's EMA
+    may adapt differently than Autostep's v_i.
+
+    The target is computed from unscaled features to maintain consistent
+    difficulty across scale changes.
+
+    Attributes:
+        feature_dim: Dimension of observation vectors
+        weight_drift_rate: Std dev of weight drift per step
+        scale_drift_rate: Std dev of log-scale drift per step
+        min_log_scale: Minimum log-scale (clips random walk)
+        max_log_scale: Maximum log-scale (clips random walk)
+        noise_std: Standard deviation of observation noise
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        weight_drift_rate: float = 0.001,
+        scale_drift_rate: float = 0.01,
+        min_log_scale: float = -4.0,  # exp(-4) ~ 0.018
+        max_log_scale: float = 4.0,  # exp(4) ~ 54.6
+        noise_std: float = 0.1,
+    ):
+        """Initialize the scale drift stream.
+
+        Args:
+            feature_dim: Dimension of feature vectors
+            weight_drift_rate: Std dev of weight drift per step
+            scale_drift_rate: Std dev of log-scale drift per step
+            min_log_scale: Minimum log-scale (clips drift)
+            max_log_scale: Maximum log-scale (clips drift)
+            noise_std: Std dev of target noise
+        """
+        self._feature_dim = feature_dim
+        self._weight_drift_rate = weight_drift_rate
+        self._scale_drift_rate = scale_drift_rate
+        self._min_log_scale = min_log_scale
+        self._max_log_scale = max_log_scale
+        self._noise_std = noise_std
+
+    @property
+    def feature_dim(self) -> int:
+        """Return the dimension of observation vectors."""
+        return self._feature_dim
+
+    def init(self, key: Array) -> ScaleDriftState:
+        """Initialize stream state.
+
+        Args:
+            key: JAX random key
+
+        Returns:
+            Initial stream state with random weights and unit scales
+        """
+        key, k_weights = jr.split(key)
+        weights = jr.normal(k_weights, (self._feature_dim,), dtype=jnp.float32)
+        # Initial log-scales at 0 (scale = 1)
+        log_scales = jnp.zeros(self._feature_dim, dtype=jnp.float32)
+        return ScaleDriftState(
+            key=key,
+            true_weights=weights,
+            log_scales=log_scales,
+            step_count=jnp.array(0, dtype=jnp.int32),
+        )
+
+    def step(
+        self, state: ScaleDriftState, idx: Array
+    ) -> tuple[TimeStep, ScaleDriftState]:
+        """Generate one time step.
+
+        Args:
+            state: Current stream state
+            idx: Current step index (unused)
+
+        Returns:
+            Tuple of (timestep, new_state)
+        """
+        del idx  # unused
+        key, k_w_drift, k_s_drift, k_x, k_noise = jr.split(state.key, 5)
+
+        # Drift target weights
+        weight_drift = self._weight_drift_rate * jr.normal(
+            k_w_drift, (self._feature_dim,), dtype=jnp.float32
+        )
+        new_weights = state.true_weights + weight_drift
+
+        # Drift log-scales (bounded random walk)
+        scale_drift = self._scale_drift_rate * jr.normal(
+            k_s_drift, (self._feature_dim,), dtype=jnp.float32
+        )
+        new_log_scales = state.log_scales + scale_drift
+        new_log_scales = jnp.clip(new_log_scales, self._min_log_scale, self._max_log_scale)
+
+        # Generate raw features (unscaled)
+        raw_x = jr.normal(k_x, (self._feature_dim,), dtype=jnp.float32)
+
+        # Apply scaling to observation
+        scales = jnp.exp(new_log_scales)
+        x = raw_x * scales
+
+        # Target from true weights using RAW features
+        noise = self._noise_std * jr.normal(k_noise, (), dtype=jnp.float32)
+        target = jnp.dot(new_weights, raw_x) + noise
+
+        timestep = TimeStep(observation=x, target=jnp.atleast_1d(target))
+        new_state = ScaleDriftState(
+            key=key,
+            true_weights=new_weights,
+            log_scales=new_log_scales,
+            step_count=state.step_count + 1,
+        )
+        return timestep, new_state
+
+
 # Backward-compatible aliases
 RandomWalkTarget = RandomWalkStream
 AbruptChangeTarget = AbruptChangeStream

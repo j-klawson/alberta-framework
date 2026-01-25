@@ -7,8 +7,10 @@ import pytest
 from alberta_framework import (
     AbruptChangeStream,
     CyclicStream,
+    DynamicScaleShiftStream,
     PeriodicChangeStream,
     RandomWalkStream,
+    ScaleDriftStream,
     ScaledStreamWrapper,
     SuttonExperiment1Stream,
     TimeStep,
@@ -417,3 +419,211 @@ class TestMakeScaleRange:
         assert scales.shape == (7,)
         assert jnp.isclose(scales[0], 0.001, rtol=1e-5)
         assert jnp.isclose(scales[-1], 1000.0, rtol=1e-5)
+
+
+class TestDynamicScaleShiftStream:
+    """Tests for the DynamicScaleShiftStream class."""
+
+    def test_init_creates_valid_state(self, rng_key):
+        """Stream init should create valid state with correct shapes."""
+        stream = DynamicScaleShiftStream(feature_dim=10)
+        state = stream.init(rng_key)
+
+        assert state.key is not None
+        assert state.true_weights.shape == (10,)
+        assert state.current_scales.shape == (10,)
+        assert state.step_count == 0
+
+    def test_step_produces_valid_timestep(self, rng_key):
+        """Step should produce valid observation and target."""
+        stream = DynamicScaleShiftStream(feature_dim=10)
+        state = stream.init(rng_key)
+
+        timestep, new_state = stream.step(state, jnp.array(0))
+
+        assert timestep.observation.shape == (10,)
+        assert timestep.target.shape == (1,)
+        assert jnp.all(jnp.isfinite(timestep.observation))
+        assert jnp.all(jnp.isfinite(timestep.target))
+
+    def test_feature_dim_property(self):
+        """Feature dim property should return correct dimension."""
+        stream = DynamicScaleShiftStream(feature_dim=20)
+        assert stream.feature_dim == 20
+
+    def test_scales_change_at_interval(self, rng_key):
+        """Scales should change at specified interval."""
+        stream = DynamicScaleShiftStream(
+            feature_dim=10,
+            scale_change_interval=10,
+            weight_change_interval=1000,  # Don't change weights
+        )
+        state = stream.init(rng_key)
+
+        initial_scales = state.current_scales.copy()
+
+        # Run 9 steps (step_count goes 0->9)
+        for i in range(9):
+            _, state = stream.step(state, jnp.array(i))
+
+        scales_at_9 = state.current_scales
+
+        # Run one more step (step_count becomes 10)
+        _, state = stream.step(state, jnp.array(9))
+
+        scales_at_10 = state.current_scales
+
+        # Scales should have changed at step 10
+        assert not jnp.allclose(initial_scales, scales_at_10)
+
+    def test_weights_change_at_interval(self, rng_key):
+        """Weights should change at specified interval."""
+        stream = DynamicScaleShiftStream(
+            feature_dim=10,
+            scale_change_interval=1000,  # Don't change scales
+            weight_change_interval=10,
+        )
+        state = stream.init(rng_key)
+
+        initial_weights = state.true_weights.copy()
+
+        # Run 10 steps
+        for i in range(10):
+            _, state = stream.step(state, jnp.array(i))
+
+        # Weights should have changed at step 10
+        assert not jnp.allclose(initial_weights, state.true_weights)
+
+    def test_scales_within_bounds(self, rng_key):
+        """Scales should be within min_scale and max_scale."""
+        min_scale, max_scale = 0.01, 100.0
+        stream = DynamicScaleShiftStream(
+            feature_dim=10,
+            scale_change_interval=5,
+            min_scale=min_scale,
+            max_scale=max_scale,
+        )
+        state = stream.init(rng_key)
+
+        # Run many steps with scale changes
+        for i in range(50):
+            _, state = stream.step(state, jnp.array(i))
+
+        # All scales should be within bounds
+        assert jnp.all(state.current_scales >= min_scale)
+        assert jnp.all(state.current_scales <= max_scale)
+
+    def test_deterministic_with_same_key(self, rng_key):
+        """Same key should produce same sequence."""
+        stream = DynamicScaleShiftStream(feature_dim=10)
+
+        state1 = stream.init(rng_key)
+        timestep1, _ = stream.step(state1, jnp.array(0))
+
+        state2 = stream.init(rng_key)
+        timestep2, _ = stream.step(state2, jnp.array(0))
+
+        assert jnp.allclose(timestep1.observation, timestep2.observation)
+        assert jnp.allclose(timestep1.target, timestep2.target)
+
+
+class TestScaleDriftStream:
+    """Tests for the ScaleDriftStream class."""
+
+    def test_init_creates_valid_state(self, rng_key):
+        """Stream init should create valid state with correct shapes."""
+        stream = ScaleDriftStream(feature_dim=10)
+        state = stream.init(rng_key)
+
+        assert state.key is not None
+        assert state.true_weights.shape == (10,)
+        assert state.log_scales.shape == (10,)
+        assert state.step_count == 0
+        # Initial log_scales should be 0 (scale = 1)
+        assert jnp.allclose(state.log_scales, 0.0)
+
+    def test_step_produces_valid_timestep(self, rng_key):
+        """Step should produce valid observation and target."""
+        stream = ScaleDriftStream(feature_dim=10)
+        state = stream.init(rng_key)
+
+        timestep, new_state = stream.step(state, jnp.array(0))
+
+        assert timestep.observation.shape == (10,)
+        assert timestep.target.shape == (1,)
+        assert jnp.all(jnp.isfinite(timestep.observation))
+        assert jnp.all(jnp.isfinite(timestep.target))
+
+    def test_feature_dim_property(self):
+        """Feature dim property should return correct dimension."""
+        stream = ScaleDriftStream(feature_dim=20)
+        assert stream.feature_dim == 20
+
+    def test_scales_drift_over_time(self, rng_key):
+        """Log-scales should change from step to step."""
+        stream = ScaleDriftStream(feature_dim=10, scale_drift_rate=0.1)  # High drift
+        state = stream.init(rng_key)
+
+        initial_log_scales = state.log_scales.copy()
+
+        for i in range(100):
+            _, state = stream.step(state, jnp.array(i))
+
+        # Log-scales should have changed
+        assert not jnp.allclose(initial_log_scales, state.log_scales)
+
+    def test_weights_drift_over_time(self, rng_key):
+        """Weights should change from step to step."""
+        stream = ScaleDriftStream(feature_dim=10, weight_drift_rate=0.1)  # High drift
+        state = stream.init(rng_key)
+
+        initial_weights = state.true_weights.copy()
+
+        for i in range(100):
+            _, state = stream.step(state, jnp.array(i))
+
+        # Weights should have changed
+        assert not jnp.allclose(initial_weights, state.true_weights)
+
+    def test_log_scales_bounded(self, rng_key):
+        """Log-scales should stay within bounds."""
+        min_log, max_log = -2.0, 2.0
+        stream = ScaleDriftStream(
+            feature_dim=10,
+            scale_drift_rate=0.5,  # High drift to test bounds
+            min_log_scale=min_log,
+            max_log_scale=max_log,
+        )
+        state = stream.init(rng_key)
+
+        # Run many steps
+        for i in range(500):
+            _, state = stream.step(state, jnp.array(i))
+
+        # Log-scales should be within bounds
+        assert jnp.all(state.log_scales >= min_log)
+        assert jnp.all(state.log_scales <= max_log)
+
+    def test_deterministic_with_same_key(self, rng_key):
+        """Same key should produce same sequence."""
+        stream = ScaleDriftStream(feature_dim=10)
+
+        state1 = stream.init(rng_key)
+        timestep1, _ = stream.step(state1, jnp.array(0))
+
+        state2 = stream.init(rng_key)
+        timestep2, _ = stream.step(state2, jnp.array(0))
+
+        assert jnp.allclose(timestep1.observation, timestep2.observation)
+        assert jnp.allclose(timestep1.target, timestep2.target)
+
+    def test_generates_valid_timesteps(self, rng_key):
+        """Should generate valid TimeStep instances over many steps."""
+        stream = ScaleDriftStream(feature_dim=5)
+        state = stream.init(rng_key)
+
+        for i in range(100):
+            timestep, state = stream.step(state, jnp.array(i))
+            assert isinstance(timestep, TimeStep)
+            assert jnp.all(jnp.isfinite(timestep.observation))
+            assert jnp.all(jnp.isfinite(timestep.target))

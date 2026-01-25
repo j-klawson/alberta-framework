@@ -20,7 +20,7 @@ src/alberta_framework/
 │   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
-│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper
+│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
 │   └── gymnasium.py    # collect_trajectory, learn_from_trajectory, GymnasiumStream (optional)
 └── utils/
     ├── metrics.py      # compute_tracking_error, compare_learners, etc.
@@ -295,6 +295,47 @@ stream = ScaledStreamWrapper(
     AbruptChangeStream(feature_dim=10, change_interval=1000),
     feature_scales=large
 )
+```
+
+### Dynamic Scale Streams (for testing normalization benefits)
+Two streams with time-varying feature scales, designed to test whether external normalization (OnlineNormalizer) provides benefits beyond Autostep's internal v_i normalization:
+
+- **DynamicScaleShiftStream**: Feature scales abruptly change at intervals
+  - Both target weights AND feature scales change at (possibly different) intervals
+  - Scales are log-uniform distributed within [min_scale, max_scale]
+  - Target is computed from unscaled features for consistent difficulty
+
+- **ScaleDriftStream**: Feature scales drift via bounded random walk on log-scale
+  - Weights drift in linear space, scales drift in log-space
+  - Log-scales are clipped to [min_log_scale, max_log_scale]
+  - Tests continuous scale tracking
+
+```python
+from alberta_framework import DynamicScaleShiftStream, ScaleDriftStream
+
+# Abrupt scale shifts every 5000 steps
+stream = DynamicScaleShiftStream(
+    feature_dim=20,
+    scale_change_interval=5000,
+    weight_change_interval=2000,
+    min_scale=0.01,
+    max_scale=100.0,
+)
+
+# Continuous scale drift
+stream = ScaleDriftStream(
+    feature_dim=20,
+    weight_drift_rate=0.001,
+    scale_drift_rate=0.02,
+    min_log_scale=-4.0,  # exp(-4) ~ 0.018
+    max_log_scale=4.0,   # exp(4) ~ 54.6
+)
+```
+
+### External Normalization Study
+Run the external normalization study to compare IDBD/Autostep with and without OnlineNormalizer:
+```bash
+python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds 30 --output-dir output/
 ```
 
 ## Future Work (Out of Scope for v0.1.0)
