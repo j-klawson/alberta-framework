@@ -7,9 +7,12 @@ import pytest
 from alberta_framework import (
     AbruptChangeStream,
     CyclicStream,
+    PeriodicChangeStream,
     RandomWalkStream,
+    ScaledStreamWrapper,
     SuttonExperiment1Stream,
     TimeStep,
+    make_scale_range,
 )
 
 
@@ -219,3 +222,198 @@ class TestCyclicStream:
             timestep, state = stream.step(state, jnp.array(i))
             assert isinstance(timestep, TimeStep)
             assert jnp.all(jnp.isfinite(timestep.observation))
+
+
+class TestPeriodicChangeStream:
+    """Tests for the PeriodicChangeStream class."""
+
+    def test_init_creates_valid_state(self, rng_key):
+        """Stream init should create valid state with correct shapes."""
+        stream = PeriodicChangeStream(feature_dim=10, period=100)
+        state = stream.init(rng_key)
+
+        assert state.key is not None
+        assert state.base_weights.shape == (10,)
+        assert state.phases.shape == (10,)
+        assert state.step_count == 0
+
+    def test_step_produces_valid_timestep(self, rng_key):
+        """Step should produce valid observation and target."""
+        stream = PeriodicChangeStream(feature_dim=10)
+        state = stream.init(rng_key)
+
+        timestep, new_state = stream.step(state, jnp.array(0))
+
+        assert timestep.observation.shape == (10,)
+        assert timestep.target.shape == (1,)
+        assert jnp.all(jnp.isfinite(timestep.observation))
+        assert jnp.all(jnp.isfinite(timestep.target))
+
+    def test_feature_dim_property(self):
+        """Feature dim property should return correct dimension."""
+        stream = PeriodicChangeStream(feature_dim=20)
+        assert stream.feature_dim == 20
+
+    def test_weights_oscillate_periodically(self, rng_key):
+        """Weights should return to similar values after one period."""
+        period = 100
+        stream = PeriodicChangeStream(feature_dim=5, period=period, amplitude=1.0)
+        state = stream.init(rng_key)
+
+        # Get weights at step 0 (after init, step_count=0)
+        t = 0
+        oscillation_0 = 1.0 * jnp.sin(2.0 * jnp.pi * t / period + state.phases)
+        weights_at_0 = state.base_weights + oscillation_0
+
+        # Run one full period
+        for i in range(period):
+            _, state = stream.step(state, jnp.array(i))
+
+        # Get weights after one period
+        t = period
+        oscillation_period = 1.0 * jnp.sin(2.0 * jnp.pi * t / period + state.phases)
+        weights_at_period = state.base_weights + oscillation_period
+
+        # Should be back to same weights (sin(2π + φ) = sin(φ))
+        assert jnp.allclose(weights_at_0, weights_at_period, atol=1e-5)
+
+    def test_weights_differ_at_half_period(self, rng_key):
+        """Weights at half period should differ from initial (unless phase happens to align)."""
+        period = 100
+        stream = PeriodicChangeStream(feature_dim=10, period=period, amplitude=2.0)
+        state = stream.init(rng_key)
+
+        # Run to half period
+        for i in range(period // 2):
+            _, state = stream.step(state, jnp.array(i))
+
+        # At t=period/2, oscillation should be different from t=0
+        # sin(π + φ) = -sin(φ), so weights should differ
+        t_half = period // 2
+        oscillation_half = 2.0 * jnp.sin(
+            2.0 * jnp.pi * t_half / period + state.phases
+        )
+        weights_half = state.base_weights + oscillation_half
+
+        t_0 = 0
+        oscillation_0 = 2.0 * jnp.sin(2.0 * jnp.pi * t_0 / period + state.phases)
+        weights_0 = state.base_weights + oscillation_0
+
+        # Weights should differ (they're inverted around base)
+        assert not jnp.allclose(weights_0, weights_half)
+
+    def test_deterministic_with_same_key(self, rng_key):
+        """Same key should produce same sequence."""
+        stream = PeriodicChangeStream(feature_dim=10)
+
+        state1 = stream.init(rng_key)
+        timestep1, _ = stream.step(state1, jnp.array(0))
+
+        state2 = stream.init(rng_key)
+        timestep2, _ = stream.step(state2, jnp.array(0))
+
+        assert jnp.allclose(timestep1.observation, timestep2.observation)
+        assert jnp.allclose(timestep1.target, timestep2.target)
+
+
+class TestScaledStreamWrapper:
+    """Tests for the ScaledStreamWrapper class."""
+
+    def test_scales_observations(self, rng_key):
+        """Wrapper should scale observations by feature_scales."""
+        inner = RandomWalkStream(feature_dim=5, feature_std=1.0)
+        scales = jnp.array([0.1, 1.0, 10.0, 100.0, 1000.0])
+        wrapped = ScaledStreamWrapper(inner, feature_scales=scales)
+
+        # Get inner stream output
+        inner_state = inner.init(rng_key)
+        inner_timestep, _ = inner.step(inner_state, jnp.array(0))
+
+        # Get wrapped stream output (same key)
+        wrapped_state = wrapped.init(rng_key)
+        wrapped_timestep, _ = wrapped.step(wrapped_state, jnp.array(0))
+
+        # Wrapped observation should be inner * scales
+        expected = inner_timestep.observation * scales
+        assert jnp.allclose(wrapped_timestep.observation, expected)
+
+    def test_preserves_target(self, rng_key):
+        """Wrapper should not modify targets."""
+        inner = RandomWalkStream(feature_dim=5)
+        scales = jnp.array([0.1, 1.0, 10.0, 100.0, 1000.0])
+        wrapped = ScaledStreamWrapper(inner, feature_scales=scales)
+
+        inner_state = inner.init(rng_key)
+        inner_timestep, _ = inner.step(inner_state, jnp.array(0))
+
+        wrapped_state = wrapped.init(rng_key)
+        wrapped_timestep, _ = wrapped.step(wrapped_state, jnp.array(0))
+
+        # Target should be unchanged
+        assert jnp.allclose(wrapped_timestep.target, inner_timestep.target)
+
+    def test_feature_dim_property(self):
+        """Feature dim should match inner stream."""
+        inner = RandomWalkStream(feature_dim=20)
+        wrapped = ScaledStreamWrapper(inner, feature_scales=jnp.ones(20))
+        assert wrapped.feature_dim == 20
+
+    def test_rejects_mismatched_scales(self):
+        """Should raise error if scales don't match feature_dim."""
+        inner = RandomWalkStream(feature_dim=10)
+        scales = jnp.ones(5)  # Wrong size
+
+        with pytest.raises(ValueError, match="must match"):
+            ScaledStreamWrapper(inner, feature_scales=scales)
+
+    def test_works_with_different_streams(self, rng_key):
+        """Should work with any stream implementing the protocol."""
+        scales = jnp.array([0.01, 0.1, 1.0, 10.0, 100.0])
+
+        # Test with AbruptChangeStream
+        stream1 = ScaledStreamWrapper(
+            AbruptChangeStream(feature_dim=5), feature_scales=scales
+        )
+        state1 = stream1.init(rng_key)
+        ts1, _ = stream1.step(state1, jnp.array(0))
+        assert ts1.observation.shape == (5,)
+
+        # Test with CyclicStream
+        stream2 = ScaledStreamWrapper(
+            CyclicStream(feature_dim=5), feature_scales=scales
+        )
+        state2 = stream2.init(rng_key)
+        ts2, _ = stream2.step(state2, jnp.array(0))
+        assert ts2.observation.shape == (5,)
+
+
+class TestMakeScaleRange:
+    """Tests for the make_scale_range utility function."""
+
+    def test_log_spaced_range(self):
+        """Log-spaced scales should span min to max logarithmically."""
+        scales = make_scale_range(5, min_scale=0.01, max_scale=100.0, log_spaced=True)
+
+        assert scales.shape == (5,)
+        assert jnp.isclose(scales[0], 0.01, rtol=1e-5)
+        assert jnp.isclose(scales[-1], 100.0, rtol=1e-5)
+        # Middle value should be geometric mean ≈ 1.0
+        assert jnp.isclose(scales[2], 1.0, rtol=0.1)
+
+    def test_linear_spaced_range(self):
+        """Linear-spaced scales should span min to max linearly."""
+        scales = make_scale_range(5, min_scale=0.0, max_scale=100.0, log_spaced=False)
+
+        assert scales.shape == (5,)
+        assert jnp.isclose(scales[0], 0.0, atol=1e-5)
+        assert jnp.isclose(scales[-1], 100.0, rtol=1e-5)
+        # Middle value should be arithmetic mean = 50.0
+        assert jnp.isclose(scales[2], 50.0, rtol=1e-5)
+
+    def test_default_range(self):
+        """Default range should be 0.001 to 1000."""
+        scales = make_scale_range(7)
+
+        assert scales.shape == (7,)
+        assert jnp.isclose(scales[0], 0.001, rtol=1e-5)
+        assert jnp.isclose(scales[-1], 1000.0, rtol=1e-5)

@@ -20,7 +20,7 @@ src/alberta_framework/
 │   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
-│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, SuttonExperiment1Stream
+│   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper
 │   └── gymnasium.py    # collect_trajectory, learn_from_trajectory, GymnasiumStream (optional)
 └── utils/
     ├── metrics.py      # compute_tracking_error, compare_learners, etc.
@@ -269,6 +269,33 @@ The API Reference section is auto-generated from docstrings in the source code. 
 
 ### Docstring Style
 Use NumPy-style docstrings for all public functions and classes. See `core/optimizers.py` for examples.
+
+## Streams for Factorial Studies
+
+The framework supports factorial experiment designs with multiple non-stationarity types and scale ranges:
+
+### Non-stationarity Types
+- **Drift**: `RandomWalkStream` - continuous random walk of target weights
+- **Abrupt**: `AbruptChangeStream` - sudden weight changes at fixed intervals
+- **Periodic**: `PeriodicChangeStream` - sinusoidal weight oscillation
+
+### Scale Ranges with ScaledStreamWrapper
+Wrap any stream to apply per-feature scaling (tests normalization benefits):
+```python
+from alberta_framework import ScaledStreamWrapper, AbruptChangeStream, make_scale_range
+import jax.numpy as jnp
+
+# Create scale ranges for factorial study
+small = make_scale_range(10, min_scale=0.1, max_scale=10.0)    # 10^2 range
+medium = make_scale_range(10, min_scale=0.01, max_scale=100.0)  # 10^4 range
+large = make_scale_range(10, min_scale=0.001, max_scale=1000.0) # 10^6 range
+
+# Wrap any stream with scaling
+stream = ScaledStreamWrapper(
+    AbruptChangeStream(feature_dim=10, change_interval=1000),
+    feature_scales=large
+)
+```
 
 ## Future Work (Out of Scope for v0.1.0)
 - Step 2: Feature generation/testing
