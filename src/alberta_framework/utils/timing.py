@@ -19,7 +19,7 @@ Example:
 """
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
 
 def format_duration(seconds: float) -> str:
