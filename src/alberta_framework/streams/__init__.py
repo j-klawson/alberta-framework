@@ -8,11 +8,17 @@ from alberta_framework.streams.synthetic import (
     CyclicState,
     CyclicStream,
     CyclicTarget,
+    PeriodicChangeState,
+    PeriodicChangeStream,
+    PeriodicChangeTarget,
     RandomWalkState,
     RandomWalkStream,
     RandomWalkTarget,
+    ScaledStreamState,
+    ScaledStreamWrapper,
     SuttonExperiment1State,
     SuttonExperiment1Stream,
+    make_scale_range,
 )
 
 __all__ = [
@@ -25,11 +31,18 @@ __all__ = [
     "CyclicState",
     "CyclicStream",
     "CyclicTarget",
+    "PeriodicChangeState",
+    "PeriodicChangeStream",
+    "PeriodicChangeTarget",
     "RandomWalkState",
     "RandomWalkStream",
     "RandomWalkTarget",
+    "ScaledStreamState",
+    "ScaledStreamWrapper",
     "SuttonExperiment1State",
     "SuttonExperiment1Stream",
+    # Utilities
+    "make_scale_range",
 ]
 
 # Gymnasium streams are optional - only export if gymnasium is installed

@@ -69,11 +69,17 @@ from alberta_framework.streams.synthetic import (
     CyclicState,
     CyclicStream,
     CyclicTarget,
+    PeriodicChangeState,
+    PeriodicChangeStream,
+    PeriodicChangeTarget,
     RandomWalkState,
     RandomWalkStream,
     RandomWalkTarget,
+    ScaledStreamState,
+    ScaledStreamWrapper,
     SuttonExperiment1State,
     SuttonExperiment1Stream,
+    make_scale_range,
 )
 
 # Utilities
@@ -144,11 +150,18 @@ __all__ = [
     "CyclicState",
     "CyclicStream",
     "CyclicTarget",
+    "PeriodicChangeState",
+    "PeriodicChangeStream",
+    "PeriodicChangeTarget",
     "RandomWalkState",
     "RandomWalkStream",
     "RandomWalkTarget",
+    "ScaledStreamState",
+    "ScaledStreamWrapper",
     "SuttonExperiment1State",
     "SuttonExperiment1Stream",
+    # Stream utilities
+    "make_scale_range",
     # Utilities
     "compare_learners",
     "compute_cumulative_error",
