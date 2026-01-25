@@ -20,6 +20,7 @@ Example:
 
 import time
 from collections.abc import Callable
+from types import TracebackType
 
 
 def format_duration(seconds: float) -> str:
@@ -108,7 +109,12 @@ class Timer:
         self.start_time = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Stop the timer and optionally print the duration."""
         self.end_time = time.perf_counter()
         self.duration = self.end_time - self.start_time

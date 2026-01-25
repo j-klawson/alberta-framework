@@ -7,13 +7,14 @@ track and adapt.
 All streams use JAX-compatible pure functions that work with jax.lax.scan.
 """
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 
 from alberta_framework.core.types import TimeStep
+from alberta_framework.streams.base import ScanStream
 
 
 class RandomWalkState(NamedTuple):
@@ -579,7 +580,7 @@ class ScaledStreamState(NamedTuple):
         inner_state: State of the wrapped stream
     """
 
-    inner_state: tuple  # Generic state from wrapped stream
+    inner_state: tuple[Any, ...]  # Generic state from wrapped stream
 
 
 class ScaledStreamWrapper:
@@ -601,7 +602,7 @@ class ScaledStreamWrapper:
         feature_scales: Per-feature scale factors (must match feature_dim)
     """
 
-    def __init__(self, inner_stream, feature_scales: Array):
+    def __init__(self, inner_stream: ScanStream[Any], feature_scales: Array):
         """Initialize the scaled stream wrapper.
 
         Args:
@@ -612,7 +613,7 @@ class ScaledStreamWrapper:
         Raises:
             ValueError: If feature_scales length doesn't match inner stream's feature_dim
         """
-        self._inner_stream = inner_stream
+        self._inner_stream: ScanStream[Any] = inner_stream
         self._feature_scales = jnp.asarray(feature_scales, dtype=jnp.float32)
 
         if self._feature_scales.shape[0] != inner_stream.feature_dim:
@@ -624,10 +625,10 @@ class ScaledStreamWrapper:
     @property
     def feature_dim(self) -> int:
         """Return the dimension of observation vectors."""
-        return self._inner_stream.feature_dim
+        return int(self._inner_stream.feature_dim)
 
     @property
-    def inner_stream(self):
+    def inner_stream(self) -> ScanStream[Any]:
         """Return the wrapped stream."""
         return self._inner_stream
 
