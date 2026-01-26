@@ -70,7 +70,7 @@ pip install alberta-framework[dev,gymnasium,analysis,docs]
 Clone the repository and install in editable mode:
 
 ```bash
-git clone https://github.com/keith/alberta-framework.git
+git clone https://github.com/j-klawson/alberta-framework.git
 cd alberta-framework
 pip install -e ".[dev,gymnasium,analysis,docs]"
 ```

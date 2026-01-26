@@ -343,3 +343,28 @@ python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds
 - Step 3: GVF predictions, Horde architecture
 - Step 4: Actor-critic control
 - Steps 5-6: Average reward formulation
+
+## Version Management (Post-PyPI Publication)
+
+After publishing to PyPI, version numbers must be considered with each commit:
+
+- **Patch** (0.1.1): Bug fixes, documentation updates
+- **Minor** (0.2.0): New features, new algorithms, API additions
+- **Major** (1.0.0): Breaking changes, API redesign
+
+Before committing changes, ask: "Does this change require a version bump?"
+
+### Publishing Commands
+```bash
+# Build package
+python -m build
+
+# Upload to TestPyPI first
+twine upload --repository testpypi dist/*
+
+# Test install from TestPyPI
+pip install --index-url https://test.pypi.org/simple/ alberta-framework
+
+# Upload to production PyPI
+twine upload dist/*
+```

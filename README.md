@@ -1,4 +1,4 @@
-# Alberta Framework: a research framework for continual reinforcement learning
+# Alberta Framework: Step 1 Baseline for Continual RL
 
 [![CI](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/j-klawson/alberta-framework/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -450,11 +450,13 @@ This generates:
 
 5. **Temporal Uniformity**: Every component updates at every step — no special initialization phases.
 
-## References
+## References & Citation
 
-- Sutton, R.S. (1992). "Adapting Bias by Gradient Descent: An Incremental Version of Delta-Bar-Delta"
-- Mahmood, A.R., Sutton, R.S., Degris, T., & Pilarski, P.M. (2012). "Tuning-free step-size adaptation"
-- The Alberta Plan for AI Research (Sutton et al.)
+If you use this framework for research, please cite:
+
+- **The Alberta Plan**: Sutton, R.S., et al. (2022). "The Alberta Plan for AI Research."
+- **IDBD**: Sutton, R.S. (1992). "Adapting Bias by Gradient Descent: An Incremental Version of Delta-Bar-Delta"
+- **Autostep**: Mahmood, A.R., Sutton, R.S., Degris, T., & Pilarski, P.M. (2012). "Tuning-free step-size adaptation"
 
 ## Contributing
 

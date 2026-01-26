@@ -58,6 +58,8 @@ gpu = [
 [project.urls]
 Homepage = "https://github.com/j-klawson/alberta-framework"
 Repository = "https://github.com/j-klawson/alberta-framework"
+Documentation = "https://j-klawson.github.io/alberta-framework"
+Issues = "https://github.com/j-klawson/alberta-framework/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/alberta_framework"]

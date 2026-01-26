@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the Alberta Framework.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/keith/alberta-framework.git
+git clone https://github.com/j-klawson/alberta-framework.git
 cd alberta-framework
 ```
 
