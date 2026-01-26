@@ -13,6 +13,14 @@ A JAX-based research framework implementing components of [The Alberta Plan](htt
 
 The Alberta Framework provides foundational components for continual reinforcement learning research. Built on JAX for hardware acceleration, the framework emphasizes temporal uniformity every component updates at every time step, with no special training phases or batch processing.
 
+## Project Context
+
+This framework is developed as part of my D.Eng. work focusing on the foundations of Continual AI. For more background and context see:
+
+* **Research Blog**: [blog.9600baud.net](https://blog.9600baud.net)
+* **Replicating Sutton '92**: [The Foundation of Step-size Adaptation](https://blog.9600baud.net/sutton92.html)
+* **About the Author**: [Keith Lawson](https://blog.9600baud.net/about.html)
+
 ### Roadmap
 
 Depending on my research trajectory I may or may not implement components required for the plan. The current focus of this framework is the Step 1 Baseline Study, investigating the interaction between adaptive optimizers and online normalization.
