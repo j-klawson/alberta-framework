@@ -39,9 +39,6 @@ pip install -e ".[dev]"
 # Install with Gymnasium support
 pip install -e ".[gymnasium]"
 
-# Install with analysis tools (matplotlib, scipy, joblib, tqdm)
-pip install -e ".[analysis]"
-
 # Run tests
 pytest tests/ -v
 
@@ -61,7 +58,7 @@ python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py" --output-dir 
 # Run Gymnasium examples (requires gymnasium)
 python examples/gymnasium_reward_prediction.py
 
-# Run publication-quality experiment (requires analysis)
+# Run publication-quality experiment
 python examples/publication_experiment.py
 
 # Build documentation (requires docs)
@@ -212,12 +209,12 @@ configs = [ExperimentConfig(name="IDBD", learner_factory=..., stream_factory=...
 results = run_multi_seed_experiment(configs, seeds=30, parallel=True)
 ```
 
-### Statistical Analysis (requires scipy)
+### Statistical Analysis
 - `pairwise_comparisons()`: All pairwise tests with Bonferroni/Holm correction
 - `ttest_comparison()`, `mann_whitney_comparison()`, `wilcoxon_comparison()`
 - `compute_statistics()`, `bootstrap_ci()`, `cohens_d()`
 
-### Visualization (requires matplotlib)
+### Visualization
 - `set_publication_style()`: Configure for academic papers
 - `plot_learning_curves()`: Learning curves with confidence intervals
 - `plot_final_performance_bars()`: Bar charts with significance markers
@@ -344,7 +341,7 @@ python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds
 - Step 4: Actor-critic control
 - Steps 5-6: Average reward formulation
 
-## Version Management (Post-PyPI Publication)
+## Version Management and CI/CD
 
 After publishing to PyPI, version numbers must be considered with each commit:
 
@@ -354,17 +351,24 @@ After publishing to PyPI, version numbers must be considered with each commit:
 
 Before committing changes, ask: "Does this change require a version bump?"
 
-### Publishing Commands
+### GitHub Actions Workflows
+
+- **ci.yml**: Runs tests, linting, and doc builds on push/PR to main
+- **docs.yml**: Deploys documentation to GitHub Pages on push to main
+- **publish.yml**: Publishes to PyPI on version tags (e.g., `v0.2.0`)
+
+### Publishing a New Version
 ```bash
-# Build package
-python -m build
-
-# Upload to TestPyPI first
-twine upload --repository testpypi dist/*
-
-# Test install from TestPyPI
-pip install --index-url https://test.pypi.org/simple/ alberta-framework
-
-# Upload to production PyPI
-twine upload dist/*
+# 1. Update version in pyproject.toml
+# 2. Commit and push changes
+# 3. Create and push a version tag
+git tag v0.2.0
+git push --tags
+# GitHub Actions handles TestPyPI -> PyPI publishing automatically
 ```
+
+### PyPI Trusted Publishing Setup
+The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
+1. PyPI project → Settings → Publishing → Add GitHub publisher
+2. Repository: `j-klawson/alberta-framework`, Workflow: `publish.yml`, Environment: `pypi`
+3. Repeat on TestPyPI with environment: `testpypi`
