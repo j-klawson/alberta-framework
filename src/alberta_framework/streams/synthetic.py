@@ -32,7 +32,7 @@ class RandomWalkState(NamedTuple):
 class RandomWalkStream:
     """Non-stationary stream where target weights drift via random walk.
 
-    The true target function is linear: y* = w_true @ x + noise
+    The true target function is linear: `y* = w_true @ x + noise`
     where w_true evolves via random walk at each time step.
 
     This tests the learner's ability to continuously track a moving target.

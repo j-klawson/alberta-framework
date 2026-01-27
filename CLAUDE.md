@@ -269,6 +269,8 @@ Use NumPy-style docstrings for all public functions and classes. See `core/optim
 
 **Code examples**: Use fenced markdown code blocks (triple backticks with `python`) inside an `Examples` section, not doctest `>>>` format. This ensures proper syntax highlighting in mkdocstrings. See `streams/base.py` or `utils/timing.py` for examples.
 
+**Math formulas**: Wrap inline math expressions in backticks for monospace rendering, e.g., `` `y = w @ x + b` `` or `` `alpha_i = exp(log_alpha_i)` ``. See `core/optimizers.py` for examples.
+
 ## Streams for Factorial Studies
 
 The framework supports factorial experiment designs with multiple non-stationarity types and scale ranges:

@@ -35,7 +35,7 @@ class OnlineNormalizer:
     """Online feature normalizer for continual learning.
 
     Normalizes features using running estimates of mean and standard deviation:
-        x_normalized = (x - mean) / (std + epsilon)
+    `x_normalized = (x - mean) / (std + epsilon)`
 
     The normalizer updates its estimates at every time step, following
     temporal uniformity. Uses exponential moving average for non-stationary

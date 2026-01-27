@@ -48,7 +48,7 @@ class UpdateResult(NamedTuple):
 class LinearLearner:
     """Linear function approximator with pluggable optimizer.
 
-    Computes predictions as: y = w @ x + b
+    Computes predictions as: `y = w @ x + b`
 
     The learner maintains weights and bias, delegating the adaptation
     of learning rates to the optimizer (e.g., LMS or IDBD).
@@ -93,7 +93,7 @@ class LinearLearner:
             observation: Input feature vector
 
         Returns:
-            Scalar prediction y = w @ x + b
+            Scalar prediction `y = w @ x + b`
         """
         return jnp.atleast_1d(jnp.dot(state.weights, observation) + state.bias)
 

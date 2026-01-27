@@ -72,7 +72,7 @@ class Optimizer[StateT: (LMSState, IDBDState, AutostepState)](ABC):
 class LMS(Optimizer[LMSState]):
     """Least Mean Square optimizer with fixed step-size.
 
-    The simplest gradient-based optimizer: w_{t+1} = w_t + alpha * delta * x_t
+    The simplest gradient-based optimizer: `w_{t+1} = w_t + alpha * delta * x_t`
 
     This serves as a baseline. The challenge is that the optimal step-size
     depends on the problem and changes as the task becomes non-stationary.
@@ -108,7 +108,7 @@ class LMS(Optimizer[LMSState]):
     ) -> OptimizerUpdate:
         """Compute LMS weight update.
 
-        Update rule: delta_w = alpha * error * x
+        Update rule: `delta_w = alpha * error * x`
 
         Args:
             state: Current LMS state
@@ -195,10 +195,11 @@ class IDBD(Optimizer[IDBDState]):
         """Compute IDBD weight update with adaptive step-sizes.
 
         The IDBD algorithm:
-        1. Compute step-sizes: alpha_i = exp(log_alpha_i)
-        2. Update weights: w_i += alpha_i * error * x_i
-        3. Update log step-sizes: log_alpha_i += beta * error * x_i * h_i
-        4. Update traces: h_i = h_i * max(0, 1 - alpha_i * x_i^2) + alpha_i * error * x_i
+
+        1. Compute step-sizes: `alpha_i = exp(log_alpha_i)`
+        2. Update weights: `w_i += alpha_i * error * x_i`
+        3. Update log step-sizes: `log_alpha_i += beta * error * x_i * h_i`
+        4. Update traces: `h_i = h_i * max(0, 1 - alpha_i * x_i^2) + alpha_i * error * x_i`
 
         The trace h_i tracks the correlation between current and past gradients.
         When gradients consistently point the same direction, h_i grows,
@@ -335,12 +336,13 @@ class Autostep(Optimizer[AutostepState]):
         """Compute Autostep weight update with normalized gradients.
 
         The Autostep algorithm:
-        1. Compute gradient: g_i = error * x_i
-        2. Normalize gradient: g_i' = g_i / max(|g_i|, v_i)
-        3. Update weights: w_i += alpha_i * g_i'
-        4. Update step-sizes: alpha_i *= exp(mu * g_i' * h_i)
-        5. Update traces: h_i = h_i * (1 - alpha_i) + alpha_i * g_i'
-        6. Update normalizers: v_i = max(|g_i|, v_i * tau)
+
+        1. Compute gradient: `g_i = error * x_i`
+        2. Normalize gradient: `g_i' = g_i / max(|g_i|, v_i)`
+        3. Update weights: `w_i += alpha_i * g_i'`
+        4. Update step-sizes: `alpha_i *= exp(mu * g_i' * h_i)`
+        5. Update traces: `h_i = h_i * (1 - alpha_i) + alpha_i * g_i'`
+        6. Update normalizers: `v_i = max(|g_i|, v_i * tau)`
 
         Args:
             state: Current Autostep state
