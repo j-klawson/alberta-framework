@@ -3,19 +3,22 @@
 This module provides a simple Timer context manager for measuring execution time
 and formatting durations in a human-readable format.
 
-Example:
-    >>> from alberta_framework.utils.timing import Timer
-    >>>
-    >>> with Timer("Training"):
-    ...     # run training code
-    ...     pass
-    Training completed in 1.23s
-    >>>
-    >>> # Or capture the duration:
-    >>> with Timer("Experiment") as t:
-    ...     # run experiment
-    ...     pass
-    >>> print(f"Took {t.duration:.2f} seconds")
+Examples
+--------
+```python
+from alberta_framework.utils.timing import Timer
+
+with Timer("Training"):
+    # run training code
+    pass
+# Output: Training completed in 1.23s
+
+# Or capture the duration:
+with Timer("Experiment") as t:
+    # run experiment
+    pass
+print(f"Took {t.duration:.2f} seconds")
+```
 """
 
 import time
@@ -32,13 +35,13 @@ def format_duration(seconds: float) -> str:
     Returns:
         Formatted string like "1.23s", "2m 30.5s", or "1h 5m 30s"
 
-    Examples:
-        >>> format_duration(0.5)
-        '0.50s'
-        >>> format_duration(90.5)
-        '1m 30.50s'
-        >>> format_duration(3665)
-        '1h 1m 5.00s'
+    Examples
+    --------
+    ```python
+    format_duration(0.5)   # Returns: '0.50s'
+    format_duration(90.5)  # Returns: '1m 30.50s'
+    format_duration(3665)  # Returns: '1h 1m 5.00s'
+    ```
     """
     if seconds < 60:
         return f"{seconds:.2f}s"
@@ -66,22 +69,25 @@ class Timer:
         start_time: Timestamp when timing started
         end_time: Timestamp when timing ended
 
-    Example:
-        >>> with Timer("Training loop"):
-        ...     for i in range(1000):
-        ...         pass
-        Training loop completed in 0.01s
+    Examples
+    --------
+    ```python
+    with Timer("Training loop"):
+        for i in range(1000):
+            pass
+    # Output: Training loop completed in 0.01s
 
-        >>> # Silent timing (no print):
-        >>> with Timer("Silent", verbose=False) as t:
-        ...     time.sleep(0.1)
-        >>> print(f"Elapsed: {t.duration:.2f}s")
-        Elapsed: 0.10s
+    # Silent timing (no print):
+    with Timer("Silent", verbose=False) as t:
+        time.sleep(0.1)
+    print(f"Elapsed: {t.duration:.2f}s")
+    # Output: Elapsed: 0.10s
 
-        >>> # Custom print function:
-        >>> with Timer("Custom", print_fn=lambda msg: print(f">> {msg}")):
-        ...     pass
-        >> Custom completed in 0.00s
+    # Custom print function:
+    with Timer("Custom", print_fn=lambda msg: print(f">> {msg}")):
+        pass
+    # Output: >> Custom completed in 0.00s
+    ```
     """
 
     def __init__(

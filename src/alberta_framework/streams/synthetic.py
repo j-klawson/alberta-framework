@@ -590,12 +590,15 @@ class ScaledStreamWrapper:
     scale factor. Useful for testing how learners handle features at different
     scales, which is important for understanding normalization benefits.
 
-    Example:
-        >>> stream = ScaledStreamWrapper(
-        ...     AbruptChangeStream(feature_dim=10, change_interval=1000),
-        ...     feature_scales=jnp.array([0.001, 0.01, 0.1, 1.0, 10.0,
-        ...                               100.0, 1000.0, 0.001, 0.01, 0.1])
-        ... )
+    Examples
+    --------
+    ```python
+    stream = ScaledStreamWrapper(
+        AbruptChangeStream(feature_dim=10, change_interval=1000),
+        feature_scales=jnp.array([0.001, 0.01, 0.1, 1.0, 10.0,
+                                  100.0, 1000.0, 0.001, 0.01, 0.1])
+    )
+    ```
 
     Attributes:
         inner_stream: The wrapped stream instance
@@ -693,9 +696,12 @@ def make_scale_range(
     Returns:
         Array of shape (feature_dim,) with scale factors
 
-    Example:
-        >>> scales = make_scale_range(10, min_scale=0.01, max_scale=100.0)
-        >>> stream = ScaledStreamWrapper(RandomWalkStream(10), scales)
+    Examples
+    --------
+    ```python
+    scales = make_scale_range(10, min_scale=0.01, max_scale=100.0)
+    stream = ScaledStreamWrapper(RandomWalkStream(10), scales)
+    ```
     """
     if log_spaced:
         return jnp.logspace(

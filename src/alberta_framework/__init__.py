@@ -5,21 +5,26 @@ learning with meta-learned step-sizes.
 
 Core Philosophy: Temporal uniformity - every component updates at every time step.
 
-Quick Start:
-    >>> import jax.random as jr
-    >>> from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop
-    >>>
-    >>> # Create a non-stationary stream
-    >>> stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
-    >>>
-    >>> # Create a learner with adaptive step-sizes
-    >>> learner = LinearLearner(optimizer=IDBD())
-    >>>
-    >>> # Run learning loop with scan
-    >>> key = jr.key(42)
-    >>> state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=key)
+Examples
+--------
+```python
+import jax.random as jr
+from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop
 
-Reference: The Alberta Plan for AI Research (Sutton et al.)
+# Create a non-stationary stream
+stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
+
+# Create a learner with adaptive step-sizes
+learner = LinearLearner(optimizer=IDBD())
+
+# Run learning loop with scan
+key = jr.key(42)
+state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=key)
+```
+
+References
+----------
+The Alberta Plan for AI Research (Sutton et al.)
 """
 
 __version__ = "0.1.0"

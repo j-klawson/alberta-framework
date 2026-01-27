@@ -267,6 +267,8 @@ The API Reference section is auto-generated from docstrings in the source code. 
 ### Docstring Style
 Use NumPy-style docstrings for all public functions and classes. See `core/optimizers.py` for examples.
 
+**Code examples**: Use fenced markdown code blocks (triple backticks with `python`) inside an `Examples` section, not doctest `>>>` format. This ensures proper syntax highlighting in mkdocstrings. See `streams/base.py` or `utils/timing.py` for examples.
+
 ## Streams for Factorial Studies
 
 The framework supports factorial experiment designs with multiple non-stationarity types and scale ranges:

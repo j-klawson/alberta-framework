@@ -30,11 +30,14 @@ class ScanStream(Protocol[StateT]):
     Type Parameters:
         StateT: The state type maintained by this stream
 
-    Example:
-        >>> stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
-        >>> key = jax.random.key(42)
-        >>> state = stream.init(key)
-        >>> timestep, new_state = stream.step(state, jnp.array(0))
+    Examples
+    --------
+    ```python
+    stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
+    key = jax.random.key(42)
+    state = stream.init(key)
+    timestep, new_state = stream.step(state, jnp.array(0))
+    ```
     """
 
     @property
