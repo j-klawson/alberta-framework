@@ -18,6 +18,8 @@ from alberta_framework.core.types import (
     IDBDState,
     LearnerState,
     LMSState,
+    NormalizerHistory,
+    NormalizerTrackingConfig,
     Observation,
     Prediction,
     StepSizeHistory,
@@ -238,10 +240,25 @@ def run_learning_loop[StreamStateT](
         )
         recording_indices = jnp.zeros(num_recordings, dtype=jnp.int32)
 
+        # Check if we need to track Autostep normalizers
+        # We detect this at trace time by checking the initial optimizer state
+        track_normalizers = hasattr(learner_state.optimizer_state, "normalizers")
+        normalizer_history = (
+            jnp.zeros((num_recordings, feature_dim), dtype=jnp.float32)
+            if track_normalizers
+            else None
+        )
+
         def step_fn_with_tracking(
-            carry: tuple[LearnerState, StreamStateT, Array, Array | None, Array], idx: Array
-        ) -> tuple[tuple[LearnerState, StreamStateT, Array, Array | None, Array], Array]:
-            l_state, s_state, ss_history, b_history, rec_indices = carry
+            carry: tuple[
+                LearnerState, StreamStateT, Array, Array | None, Array, Array | None
+            ],
+            idx: Array,
+        ) -> tuple[
+            tuple[LearnerState, StreamStateT, Array, Array | None, Array, Array | None],
+            Array,
+        ]:
+            l_state, s_state, ss_history, b_history, rec_indices, norm_history = carry
 
             # Perform learning step
             timestep, new_s_state = stream.step(s_state, idx)
@@ -291,12 +308,25 @@ def run_learning_loop[StreamStateT](
                 None,
             )
 
+            # Track Autostep normalizers (v_i) if applicable
+            new_norm_history = norm_history
+            if norm_history is not None and hasattr(opt_state, "normalizers"):
+                new_norm_history = jax.lax.cond(
+                    should_record,
+                    lambda _: norm_history.at[recording_idx].set(
+                        opt_state.normalizers  # type: ignore[union-attr]
+                    ),
+                    lambda _: norm_history,
+                    None,
+                )
+
             return (
                 result.state,
                 new_s_state,
                 new_ss_history,
                 new_b_history,
                 new_rec_indices,
+                new_norm_history,
             ), result.metrics
 
         initial_carry = (
@@ -305,16 +335,25 @@ def run_learning_loop[StreamStateT](
             step_size_history,
             bias_history,
             recording_indices,
+            normalizer_history,
         )
 
-        (final_learner, _, final_ss_history, final_b_history, final_rec_indices), metrics = (
-            jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+        (
+            final_learner,
+            _,
+            final_ss_history,
+            final_b_history,
+            final_rec_indices,
+            final_norm_history,
+        ), metrics = jax.lax.scan(
+            step_fn_with_tracking, initial_carry, jnp.arange(num_steps)
         )
 
         history = StepSizeHistory(
             step_sizes=final_ss_history,
             bias_step_sizes=final_b_history,
             recording_indices=final_rec_indices,
+            normalizers=final_norm_history,
         )
 
         return final_learner, metrics, history
@@ -473,7 +512,14 @@ def run_normalized_learning_loop[StreamStateT](
     num_steps: int,
     key: Array,
     learner_state: NormalizedLearnerState | None = None,
-) -> tuple[NormalizedLearnerState, Array]:
+    step_size_tracking: StepSizeTrackingConfig | None = None,
+    normalizer_tracking: NormalizerTrackingConfig | None = None,
+) -> (
+    tuple[NormalizedLearnerState, Array]
+    | tuple[NormalizedLearnerState, Array, StepSizeHistory]
+    | tuple[NormalizedLearnerState, Array, NormalizerHistory]
+    | tuple[NormalizedLearnerState, Array, StepSizeHistory, NormalizerHistory]
+):
     """Run the learning loop with normalization using jax.lax.scan.
 
     Args:
@@ -482,29 +528,322 @@ def run_normalized_learning_loop[StreamStateT](
         num_steps: Number of learning steps to run
         key: JAX random key for stream initialization
         learner_state: Initial state (if None, will be initialized from stream)
+        step_size_tracking: Optional config for recording per-weight step-sizes.
+            When provided, returns StepSizeHistory including Autostep normalizers if applicable.
+        normalizer_tracking: Optional config for recording per-feature normalizer state.
+            When provided, returns NormalizerHistory with means and variances over time.
 
     Returns:
-        Tuple of (final_state, metrics_array) where metrics_array has shape
-        (num_steps, 4) with columns [squared_error, error, mean_step_size, normalizer_mean_var]
+        If no tracking:
+            Tuple of (final_state, metrics_array) where metrics_array has shape
+            (num_steps, 4) with columns [squared_error, error, mean_step_size, normalizer_mean_var]
+        If step_size_tracking only:
+            Tuple of (final_state, metrics_array, step_size_history)
+        If normalizer_tracking only:
+            Tuple of (final_state, metrics_array, normalizer_history)
+        If both:
+            Tuple of (final_state, metrics_array, step_size_history, normalizer_history)
+
+    Raises:
+        ValueError: If tracking interval is invalid
     """
+    # Validate tracking configs
+    if step_size_tracking is not None:
+        if step_size_tracking.interval < 1:
+            raise ValueError(
+                f"step_size_tracking.interval must be >= 1, got {step_size_tracking.interval}"
+            )
+        if step_size_tracking.interval > num_steps:
+            raise ValueError(
+                f"step_size_tracking.interval ({step_size_tracking.interval}) "
+                f"must be <= num_steps ({num_steps})"
+            )
+
+    if normalizer_tracking is not None:
+        if normalizer_tracking.interval < 1:
+            raise ValueError(
+                f"normalizer_tracking.interval must be >= 1, got {normalizer_tracking.interval}"
+            )
+        if normalizer_tracking.interval > num_steps:
+            raise ValueError(
+                f"normalizer_tracking.interval ({normalizer_tracking.interval}) "
+                f"must be <= num_steps ({num_steps})"
+            )
+
     # Initialize states
     if learner_state is None:
         learner_state = learner.init(stream.feature_dim)
     stream_state = stream.init(key)
 
-    def step_fn(
-        carry: tuple[NormalizedLearnerState, StreamStateT], idx: Array
-    ) -> tuple[tuple[NormalizedLearnerState, StreamStateT], Array]:
-        l_state, s_state = carry
-        timestep, new_s_state = stream.step(s_state, idx)
-        result = learner.update(l_state, timestep.observation, timestep.target)
-        return (result.state, new_s_state), result.metrics
+    feature_dim = stream.feature_dim
 
-    (final_learner, _), metrics = jax.lax.scan(
-        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+    # No tracking - simple case
+    if step_size_tracking is None and normalizer_tracking is None:
+
+        def step_fn(
+            carry: tuple[NormalizedLearnerState, StreamStateT], idx: Array
+        ) -> tuple[tuple[NormalizedLearnerState, StreamStateT], Array]:
+            l_state, s_state = carry
+            timestep, new_s_state = stream.step(s_state, idx)
+            result = learner.update(l_state, timestep.observation, timestep.target)
+            return (result.state, new_s_state), result.metrics
+
+        (final_learner, _), metrics = jax.lax.scan(
+            step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+        )
+
+        return final_learner, metrics
+
+    # Tracking enabled - need to set up history arrays
+    ss_interval = step_size_tracking.interval if step_size_tracking else num_steps + 1
+    norm_interval = (
+        normalizer_tracking.interval if normalizer_tracking else num_steps + 1
     )
 
-    return final_learner, metrics
+    ss_num_recordings = num_steps // ss_interval if step_size_tracking else 0
+    norm_num_recordings = num_steps // norm_interval if normalizer_tracking else 0
+
+    # Pre-allocate step-size history arrays
+    ss_history = (
+        jnp.zeros((ss_num_recordings, feature_dim), dtype=jnp.float32)
+        if step_size_tracking
+        else None
+    )
+    ss_bias_history = (
+        jnp.zeros(ss_num_recordings, dtype=jnp.float32)
+        if step_size_tracking and step_size_tracking.include_bias
+        else None
+    )
+    ss_rec_indices = (
+        jnp.zeros(ss_num_recordings, dtype=jnp.int32) if step_size_tracking else None
+    )
+
+    # Check if we need to track Autostep normalizers
+    track_autostep_normalizers = hasattr(
+        learner_state.learner_state.optimizer_state, "normalizers"
+    )
+    ss_normalizers = (
+        jnp.zeros((ss_num_recordings, feature_dim), dtype=jnp.float32)
+        if step_size_tracking and track_autostep_normalizers
+        else None
+    )
+
+    # Pre-allocate normalizer state history arrays
+    norm_means = (
+        jnp.zeros((norm_num_recordings, feature_dim), dtype=jnp.float32)
+        if normalizer_tracking
+        else None
+    )
+    norm_vars = (
+        jnp.zeros((norm_num_recordings, feature_dim), dtype=jnp.float32)
+        if normalizer_tracking
+        else None
+    )
+    norm_rec_indices = (
+        jnp.zeros(norm_num_recordings, dtype=jnp.int32) if normalizer_tracking else None
+    )
+
+    def step_fn_with_tracking(
+        carry: tuple[
+            NormalizedLearnerState,
+            StreamStateT,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+        ],
+        idx: Array,
+    ) -> tuple[
+        tuple[
+            NormalizedLearnerState,
+            StreamStateT,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+            Array | None,
+        ],
+        Array,
+    ]:
+        (
+            l_state,
+            s_state,
+            ss_hist,
+            ss_bias_hist,
+            ss_rec,
+            ss_norm,
+            n_means,
+            n_vars,
+            n_rec,
+        ) = carry
+
+        # Perform learning step
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(l_state, timestep.observation, timestep.target)
+
+        # Step-size tracking
+        new_ss_hist = ss_hist
+        new_ss_bias_hist = ss_bias_hist
+        new_ss_rec = ss_rec
+        new_ss_norm = ss_norm
+
+        if ss_hist is not None:
+            should_record_ss = (idx % ss_interval) == 0
+            recording_idx = idx // ss_interval
+
+            # Extract current step-sizes from the inner learner state
+            opt_state = result.state.learner_state.optimizer_state
+            if hasattr(opt_state, "log_step_sizes"):
+                # IDBD stores log step-sizes
+                weight_ss = jnp.exp(opt_state.log_step_sizes)  # type: ignore[union-attr]
+                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+            elif hasattr(opt_state, "step_sizes"):
+                # Autostep stores step-sizes directly
+                weight_ss = opt_state.step_sizes  # type: ignore[union-attr]
+                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+            else:
+                # LMS has a single fixed step-size
+                weight_ss = jnp.full(feature_dim, opt_state.step_size)
+                bias_ss = opt_state.step_size
+
+            new_ss_hist = jax.lax.cond(
+                should_record_ss,
+                lambda _: ss_hist.at[recording_idx].set(weight_ss),  # type: ignore[union-attr]
+                lambda _: ss_hist,
+                None,
+            )
+
+            if ss_bias_hist is not None:
+                new_ss_bias_hist = jax.lax.cond(
+                    should_record_ss,
+                    lambda _: ss_bias_hist.at[recording_idx].set(bias_ss),  # type: ignore[union-attr]
+                    lambda _: ss_bias_hist,
+                    None,
+                )
+
+            if ss_rec is not None:
+                new_ss_rec = jax.lax.cond(
+                    should_record_ss,
+                    lambda _: ss_rec.at[recording_idx].set(idx),  # type: ignore[union-attr]
+                    lambda _: ss_rec,
+                    None,
+                )
+
+            # Track Autostep normalizers (v_i) if applicable
+            if ss_norm is not None and hasattr(opt_state, "normalizers"):
+                new_ss_norm = jax.lax.cond(
+                    should_record_ss,
+                    lambda _: ss_norm.at[recording_idx].set(  # type: ignore[union-attr]
+                        opt_state.normalizers  # type: ignore[union-attr]
+                    ),
+                    lambda _: ss_norm,
+                    None,
+                )
+
+        # Normalizer state tracking
+        new_n_means = n_means
+        new_n_vars = n_vars
+        new_n_rec = n_rec
+
+        if n_means is not None:
+            should_record_norm = (idx % norm_interval) == 0
+            norm_recording_idx = idx // norm_interval
+
+            norm_state = result.state.normalizer_state
+
+            new_n_means = jax.lax.cond(
+                should_record_norm,
+                lambda _: n_means.at[norm_recording_idx].set(norm_state.mean),  # type: ignore[union-attr]
+                lambda _: n_means,
+                None,
+            )
+
+            if n_vars is not None:
+                new_n_vars = jax.lax.cond(
+                    should_record_norm,
+                    lambda _: n_vars.at[norm_recording_idx].set(norm_state.var),  # type: ignore[union-attr]
+                    lambda _: n_vars,
+                    None,
+                )
+
+            if n_rec is not None:
+                new_n_rec = jax.lax.cond(
+                    should_record_norm,
+                    lambda _: n_rec.at[norm_recording_idx].set(idx),  # type: ignore[union-attr]
+                    lambda _: n_rec,
+                    None,
+                )
+
+        return (
+            result.state,
+            new_s_state,
+            new_ss_hist,
+            new_ss_bias_hist,
+            new_ss_rec,
+            new_ss_norm,
+            new_n_means,
+            new_n_vars,
+            new_n_rec,
+        ), result.metrics
+
+    initial_carry = (
+        learner_state,
+        stream_state,
+        ss_history,
+        ss_bias_history,
+        ss_rec_indices,
+        ss_normalizers,
+        norm_means,
+        norm_vars,
+        norm_rec_indices,
+    )
+
+    (
+        final_learner,
+        _,
+        final_ss_hist,
+        final_ss_bias_hist,
+        final_ss_rec,
+        final_ss_norm,
+        final_n_means,
+        final_n_vars,
+        final_n_rec,
+    ), metrics = jax.lax.scan(
+        step_fn_with_tracking, initial_carry, jnp.arange(num_steps)
+    )
+
+    # Build return values based on what was tracked
+    ss_history_result = None
+    if step_size_tracking is not None and final_ss_hist is not None:
+        ss_history_result = StepSizeHistory(
+            step_sizes=final_ss_hist,
+            bias_step_sizes=final_ss_bias_hist,
+            recording_indices=final_ss_rec,  # type: ignore[arg-type]
+            normalizers=final_ss_norm,
+        )
+
+    norm_history_result = None
+    if normalizer_tracking is not None and final_n_means is not None:
+        norm_history_result = NormalizerHistory(
+            means=final_n_means,
+            variances=final_n_vars,  # type: ignore[arg-type]
+            recording_indices=final_n_rec,  # type: ignore[arg-type]
+        )
+
+    # Return appropriate tuple based on what was tracked
+    if ss_history_result is not None and norm_history_result is not None:
+        return final_learner, metrics, ss_history_result, norm_history_result
+    elif ss_history_result is not None:
+        return final_learner, metrics, ss_history_result
+    elif norm_history_result is not None:
+        return final_learner, metrics, norm_history_result
+    else:
+        return final_learner, metrics
 
 
 def metrics_to_dicts(metrics: Array, normalized: bool = False) -> list[dict[str, float]]:

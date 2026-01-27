@@ -126,10 +126,40 @@ class StepSizeHistory(NamedTuple):
         step_sizes: Per-weight step-sizes at each recording, shape (num_recordings, num_weights)
         bias_step_sizes: Bias step-sizes at each recording, shape (num_recordings,) or None
         recording_indices: Step indices where recordings were made, shape (num_recordings,)
+        normalizers: Autostep's per-weight normalizers (v_i) at each recording,
+            shape (num_recordings, num_weights) or None. Only populated for Autostep optimizer.
     """
 
     step_sizes: Array  # (num_recordings, num_weights)
     bias_step_sizes: Array | None  # (num_recordings,) or None
+    recording_indices: Array  # (num_recordings,)
+    normalizers: Array | None = None  # (num_recordings, num_weights) - Autostep v_i
+
+
+class NormalizerTrackingConfig(NamedTuple):
+    """Configuration for recording per-feature normalizer state during training.
+
+    Attributes:
+        interval: Record normalizer state every N steps
+    """
+
+    interval: int
+
+
+class NormalizerHistory(NamedTuple):
+    """History of per-feature normalizer state recorded during training.
+
+    Used for analyzing how the OnlineNormalizer adapts to distribution shifts
+    (reactive lag diagnostic).
+
+    Attributes:
+        means: Per-feature mean estimates at each recording, shape (num_recordings, feature_dim)
+        variances: Per-feature variance estimates at each recording, shape (num_recordings, feature_dim)
+        recording_indices: Step indices where recordings were made, shape (num_recordings,)
+    """
+
+    means: Array  # (num_recordings, feature_dim)
+    variances: Array  # (num_recordings, feature_dim)
     recording_indices: Array  # (num_recordings,)
 
 

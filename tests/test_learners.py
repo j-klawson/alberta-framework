@@ -9,11 +9,15 @@ from alberta_framework import (
     IDBD,
     LMS,
     LinearLearner,
+    NormalizedLinearLearner,
+    NormalizerHistory,
+    NormalizerTrackingConfig,
     RandomWalkStream,
     StepSizeHistory,
     StepSizeTrackingConfig,
     metrics_to_dicts,
     run_learning_loop,
+    run_normalized_learning_loop,
 )
 
 
@@ -337,3 +341,188 @@ class TestStepSizeTracking:
         # Should record at steps 0, 25, 50, 75
         expected_indices = jnp.array([0, 25, 50, 75])
         assert jnp.allclose(history.recording_indices, expected_indices)
+
+    def test_autostep_normalizers_tracked(self, rng_key):
+        """Autostep should track normalizers (v_i) in history."""
+        feature_dim = 5
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=Autostep())
+        config = StepSizeTrackingConfig(interval=10)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        # Autostep should have normalizers tracked
+        assert history.normalizers is not None
+        assert history.normalizers.shape == history.step_sizes.shape
+
+    def test_idbd_normalizers_none(self, rng_key):
+        """IDBD should not track normalizers (only Autostep has v_i)."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        config = StepSizeTrackingConfig(interval=10)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        # IDBD doesn't have normalizers
+        assert history.normalizers is None
+
+    def test_lms_normalizers_none(self, rng_key):
+        """LMS should not track normalizers."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=LMS())
+        config = StepSizeTrackingConfig(interval=10)
+
+        _, _, history = run_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=config
+        )
+
+        # LMS doesn't have normalizers
+        assert history.normalizers is None
+
+
+class TestNormalizedLearningLoopTracking:
+    """Tests for tracking in run_normalized_learning_loop."""
+
+    def test_no_tracking_returns_2_tuple(self, rng_key):
+        """Without tracking, should return (state, metrics)."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+
+        result = run_normalized_learning_loop(
+            learner, stream, num_steps=100, key=rng_key
+        )
+
+        assert len(result) == 2
+        state, metrics = result
+        assert state is not None
+        assert metrics.shape == (100, 4)  # 4 columns for normalized learner
+
+    def test_step_size_tracking_returns_3_tuple(self, rng_key):
+        """With step_size_tracking, should return (state, metrics, ss_history)."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        ss_config = StepSizeTrackingConfig(interval=10)
+
+        result = run_normalized_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=ss_config
+        )
+
+        assert len(result) == 3
+        state, metrics, ss_history = result
+        assert state is not None
+        assert metrics.shape == (100, 4)
+        assert isinstance(ss_history, StepSizeHistory)
+        assert ss_history.step_sizes.shape == (10, 5)
+
+    def test_normalizer_tracking_returns_3_tuple(self, rng_key):
+        """With normalizer_tracking, should return (state, metrics, norm_history)."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        norm_config = NormalizerTrackingConfig(interval=10)
+
+        result = run_normalized_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
+        )
+
+        assert len(result) == 3
+        state, metrics, norm_history = result
+        assert state is not None
+        assert metrics.shape == (100, 4)
+        assert isinstance(norm_history, NormalizerHistory)
+        assert norm_history.means.shape == (10, 5)
+        assert norm_history.variances.shape == (10, 5)
+
+    def test_both_tracking_returns_4_tuple(self, rng_key):
+        """With both tracking options, should return 4-tuple."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        ss_config = StepSizeTrackingConfig(interval=10)
+        norm_config = NormalizerTrackingConfig(interval=20)
+
+        result = run_normalized_learning_loop(
+            learner, stream, num_steps=100, key=rng_key,
+            step_size_tracking=ss_config, normalizer_tracking=norm_config
+        )
+
+        assert len(result) == 4
+        state, metrics, ss_history, norm_history = result
+        assert state is not None
+        assert metrics.shape == (100, 4)
+        assert isinstance(ss_history, StepSizeHistory)
+        assert isinstance(norm_history, NormalizerHistory)
+        # Different intervals
+        assert ss_history.step_sizes.shape == (10, 5)  # 100 // 10
+        assert norm_history.means.shape == (5, 5)  # 100 // 20
+
+    def test_autostep_normalizers_tracked_in_normalized_loop(self, rng_key):
+        """Autostep's v_i should be tracked in normalized learning loop."""
+        feature_dim = 5
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = NormalizedLinearLearner(optimizer=Autostep())
+        ss_config = StepSizeTrackingConfig(interval=10)
+
+        _, _, ss_history = run_normalized_learning_loop(
+            learner, stream, num_steps=100, key=rng_key, step_size_tracking=ss_config
+        )
+
+        # Autostep should have normalizers tracked
+        assert ss_history.normalizers is not None
+        assert ss_history.normalizers.shape == ss_history.step_sizes.shape
+
+    def test_normalizer_history_tracks_adaptation(self, rng_key):
+        """Normalizer history should capture mean/var adaptation over time."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.01)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        norm_config = NormalizerTrackingConfig(interval=100)
+
+        _, _, norm_history = run_normalized_learning_loop(
+            learner, stream, num_steps=10000, key=rng_key, normalizer_tracking=norm_config
+        )
+
+        # Means should drift over time (due to stream drift)
+        first_means = norm_history.means[0]
+        last_means = norm_history.means[-1]
+        # At least some features should have different means
+        assert not jnp.allclose(first_means, last_means, atol=0.1)
+
+    def test_normalizer_tracking_invalid_interval_raises(self, rng_key):
+        """Invalid normalizer tracking interval should raise ValueError."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        norm_config = NormalizerTrackingConfig(interval=0)
+
+        with pytest.raises(ValueError, match="normalizer_tracking.interval must be >= 1"):
+            run_normalized_learning_loop(
+                learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
+            )
+
+    def test_normalizer_tracking_interval_too_large_raises(self, rng_key):
+        """Normalizer tracking interval > num_steps should raise ValueError."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        norm_config = NormalizerTrackingConfig(interval=200)
+
+        with pytest.raises(ValueError, match="must be <= num_steps"):
+            run_normalized_learning_loop(
+                learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
+            )
+
+    def test_recording_indices_correct_for_normalizer(self, rng_key):
+        """Normalizer recording indices should be correct."""
+        num_steps = 100
+        interval = 25
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        norm_config = NormalizerTrackingConfig(interval=interval)
+
+        _, _, norm_history = run_normalized_learning_loop(
+            learner, stream, num_steps=num_steps, key=rng_key, normalizer_tracking=norm_config
+        )
+
+        # Should record at steps 0, 25, 50, 75
+        expected_indices = jnp.array([0, 25, 50, 75])
+        assert jnp.allclose(norm_history.recording_indices, expected_indices)

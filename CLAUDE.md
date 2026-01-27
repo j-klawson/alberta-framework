@@ -14,10 +14,10 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory
+│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory, NormalizerTrackingConfig, NormalizerHistory
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, metrics_to_dicts
+│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, run_normalized_learning_loop, metrics_to_dicts
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -125,15 +125,15 @@ IDBD/Autostep should beat LMS when starting from the same step-size (demonstrate
 With optimal parameters, adaptive methods should match best grid-searched LMS.
 
 ### Step-Size Tracking for Meta-Adaptation Analysis
-The `run_learning_loop` function supports optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
+The `run_learning_loop` and `run_normalized_learning_loop` functions support optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
 
 ```python
-from alberta_framework import LinearLearner, IDBD, StepSizeTrackingConfig, run_learning_loop
+from alberta_framework import LinearLearner, IDBD, Autostep, StepSizeTrackingConfig, run_learning_loop
 from alberta_framework.streams import RandomWalkStream
 import jax.random as jr
 
 stream = RandomWalkStream(feature_dim=10)
-learner = LinearLearner(optimizer=IDBD())
+learner = LinearLearner(optimizer=Autostep())
 config = StepSizeTrackingConfig(interval=100)  # Record every 100 steps
 
 state, metrics, history = run_learning_loop(
@@ -143,6 +143,7 @@ state, metrics, history = run_learning_loop(
 # history.step_sizes: shape (100, 10) - per-weight step-sizes at each recording
 # history.bias_step_sizes: shape (100,) - bias step-size at each recording
 # history.recording_indices: shape (100,) - step indices where recordings were made
+# history.normalizers: shape (100, 10) - Autostep's v_i normalizers (None for IDBD/LMS)
 ```
 
 Key features:
@@ -150,6 +151,41 @@ Key features:
 - Configurable interval to control memory usage
 - Optional `include_bias=False` to skip bias tracking
 - Works with LMS (constant), IDBD, and Autostep optimizers
+- **Autostep's normalizers (v_i)** are tracked automatically when using Autostep
+
+### Normalizer State Tracking for Reactive Lag Analysis
+The `run_normalized_learning_loop` function supports tracking the OnlineNormalizer's per-feature mean and variance estimates over time. This is essential for analyzing reactive lag — how quickly the normalizer adapts to distribution shifts:
+
+```python
+from alberta_framework import (
+    NormalizedLinearLearner, IDBD,
+    StepSizeTrackingConfig, NormalizerTrackingConfig,
+    run_normalized_learning_loop
+)
+from alberta_framework.streams import RandomWalkStream
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+learner = NormalizedLinearLearner(optimizer=IDBD())
+ss_config = StepSizeTrackingConfig(interval=100)
+norm_config = NormalizerTrackingConfig(interval=100)
+
+# Track both step-sizes and normalizer state
+state, metrics, ss_history, norm_history = run_normalized_learning_loop(
+    learner, stream, num_steps=10000, key=jr.key(42),
+    step_size_tracking=ss_config, normalizer_tracking=norm_config
+)
+
+# norm_history.means: shape (100, 10) - per-feature mean estimates at each recording
+# norm_history.variances: shape (100, 10) - per-feature variance estimates at each recording
+# norm_history.recording_indices: shape (100,) - step indices where recordings were made
+```
+
+Return value depends on tracking options:
+- No tracking: `(state, metrics)` — 2-tuple
+- step_size_tracking only: `(state, metrics, ss_history)` — 3-tuple
+- normalizer_tracking only: `(state, metrics, norm_history)` — 3-tuple
+- Both: `(state, metrics, ss_history, norm_history)` — 4-tuple
 
 ## Gymnasium Integration
 
