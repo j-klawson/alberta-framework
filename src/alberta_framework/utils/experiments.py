@@ -110,13 +110,14 @@ def run_single_experiment(
 
     final_state: LearnerState | NormalizedLearnerState
     if isinstance(learner, NormalizedLinearLearner):
-        final_state, metrics = run_normalized_learning_loop(
+        norm_result = run_normalized_learning_loop(
             learner, stream, config.num_steps, key
         )
+        final_state, metrics = cast(tuple[NormalizedLearnerState, Any], norm_result)
         metrics_history = metrics_to_dicts(metrics, normalized=True)
     else:
-        result = run_learning_loop(learner, stream, config.num_steps, key)
-        final_state, metrics = cast(tuple[LearnerState, Any], result)
+        linear_result = run_learning_loop(learner, stream, config.num_steps, key)
+        final_state, metrics = cast(tuple[LearnerState, Any], linear_result)
         metrics_history = metrics_to_dicts(metrics)
 
     return SingleRunResult(

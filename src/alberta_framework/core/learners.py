@@ -713,7 +713,7 @@ def run_normalized_learning_loop[StreamStateT](
 
             new_ss_hist = jax.lax.cond(
                 should_record_ss,
-                lambda _: ss_hist.at[recording_idx].set(weight_ss),  # type: ignore[union-attr]
+                lambda _: ss_hist.at[recording_idx].set(weight_ss),
                 lambda _: ss_hist,
                 None,
             )
@@ -721,7 +721,7 @@ def run_normalized_learning_loop[StreamStateT](
             if ss_bias_hist is not None:
                 new_ss_bias_hist = jax.lax.cond(
                     should_record_ss,
-                    lambda _: ss_bias_hist.at[recording_idx].set(bias_ss),  # type: ignore[union-attr]
+                    lambda _: ss_bias_hist.at[recording_idx].set(bias_ss),
                     lambda _: ss_bias_hist,
                     None,
                 )
@@ -729,7 +729,7 @@ def run_normalized_learning_loop[StreamStateT](
             if ss_rec is not None:
                 new_ss_rec = jax.lax.cond(
                     should_record_ss,
-                    lambda _: ss_rec.at[recording_idx].set(idx),  # type: ignore[union-attr]
+                    lambda _: ss_rec.at[recording_idx].set(idx),
                     lambda _: ss_rec,
                     None,
                 )
@@ -738,7 +738,7 @@ def run_normalized_learning_loop[StreamStateT](
             if ss_norm is not None and hasattr(opt_state, "normalizers"):
                 new_ss_norm = jax.lax.cond(
                     should_record_ss,
-                    lambda _: ss_norm.at[recording_idx].set(  # type: ignore[union-attr]
+                    lambda _: ss_norm.at[recording_idx].set(
                         opt_state.normalizers  # type: ignore[union-attr]
                     ),
                     lambda _: ss_norm,
@@ -758,7 +758,7 @@ def run_normalized_learning_loop[StreamStateT](
 
             new_n_means = jax.lax.cond(
                 should_record_norm,
-                lambda _: n_means.at[norm_recording_idx].set(norm_state.mean),  # type: ignore[union-attr]
+                lambda _: n_means.at[norm_recording_idx].set(norm_state.mean),
                 lambda _: n_means,
                 None,
             )
@@ -766,7 +766,7 @@ def run_normalized_learning_loop[StreamStateT](
             if n_vars is not None:
                 new_n_vars = jax.lax.cond(
                     should_record_norm,
-                    lambda _: n_vars.at[norm_recording_idx].set(norm_state.var),  # type: ignore[union-attr]
+                    lambda _: n_vars.at[norm_recording_idx].set(norm_state.var),
                     lambda _: n_vars,
                     None,
                 )
@@ -774,7 +774,7 @@ def run_normalized_learning_loop[StreamStateT](
             if n_rec is not None:
                 new_n_rec = jax.lax.cond(
                     should_record_norm,
-                    lambda _: n_rec.at[norm_recording_idx].set(idx),  # type: ignore[union-attr]
+                    lambda _: n_rec.at[norm_recording_idx].set(idx),
                     lambda _: n_rec,
                     None,
                 )
