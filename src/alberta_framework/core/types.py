@@ -154,7 +154,8 @@ class NormalizerHistory(NamedTuple):
 
     Attributes:
         means: Per-feature mean estimates at each recording, shape (num_recordings, feature_dim)
-        variances: Per-feature variance estimates at each recording, shape (num_recordings, feature_dim)
+        variances: Per-feature variance estimates at each recording,
+            shape (num_recordings, feature_dim)
         recording_indices: Step indices where recordings were made, shape (num_recordings,)
     """
 
