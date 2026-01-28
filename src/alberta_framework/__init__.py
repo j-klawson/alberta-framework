@@ -1,9 +1,20 @@
-"""Alberta Framework: Implementation of the Alberta Plan for AI Research.
+"""Alberta Framework: A JAX-based research framework for continual AI.
 
-This framework implements Step 1 of the Alberta Plan: continual supervised
-learning with meta-learned step-sizes.
+The Alberta Framework provides foundational components for continual reinforcement
+learning research. Built on JAX for hardware acceleration, the framework emphasizes
+temporal uniformity — every component updates at every time step, with no special
+training phases or batch processing.
 
-Core Philosophy: Temporal uniformity - every component updates at every time step.
+Roadmap
+-------
+| Step | Focus | Status |
+|------|-------|--------|
+| 1 | Meta-learned step-sizes (IDBD, Autostep) | **Complete** |
+| 2 | Feature generation and testing | Planned |
+| 3 | GVF predictions, Horde architecture | Planned |
+| 4 | Actor-critic with eligibility traces | Planned |
+| 5-6 | Off-policy learning, average reward | Planned |
+| 7-12 | Hierarchical, multi-agent, world models | Future |
 
 Examples
 --------
@@ -11,20 +22,21 @@ Examples
 import jax.random as jr
 from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop
 
-# Create a non-stationary stream
+# Non-stationary stream where target weights drift over time
 stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
 
-# Create a learner with adaptive step-sizes
+# Learner with IDBD meta-learned step-sizes
 learner = LinearLearner(optimizer=IDBD())
 
-# Run learning loop with scan
-key = jr.key(42)
-state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=key)
+# JIT-compiled training via jax.lax.scan
+state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
 ```
 
 References
 ----------
-The Alberta Plan for AI Research (Sutton et al.)
+- The Alberta Plan for AI Research (Sutton et al., 2022): https://arxiv.org/abs/2208.11173
+- Adapting Bias by Gradient Descent (Sutton, 1992)
+- Tuning-free Step-size Adaptation (Mahmood et al., 2012)
 """
 
 __version__ = "0.1.0"
