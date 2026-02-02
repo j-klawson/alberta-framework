@@ -4,10 +4,13 @@ This module defines the core data types used throughout the framework,
 following JAX conventions with immutable NamedTuples for state management.
 """
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax.numpy as jnp
 from jax import Array
+
+if TYPE_CHECKING:
+    from alberta_framework.core.learners import NormalizedLearnerState
 
 # Type aliases for clarity
 Observation = Array  # x_t: feature vector
