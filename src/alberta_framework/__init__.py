@@ -39,7 +39,7 @@ References
 - Tuning-free Step-size Adaptation (Mahmood et al., 2012)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Core types
 # Learners
@@ -50,7 +50,9 @@ from alberta_framework.core.learners import (
     UpdateResult,
     metrics_to_dicts,
     run_learning_loop,
+    run_learning_loop_batched,
     run_normalized_learning_loop,
+    run_normalized_learning_loop_batched,
 )
 
 # Normalizers
@@ -64,6 +66,8 @@ from alberta_framework.core.normalizers import (
 from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
 from alberta_framework.core.types import (
     AutostepState,
+    BatchedLearningResult,
+    BatchedNormalizedResult,
     IDBDState,
     LearnerState,
     LMSState,
@@ -138,6 +142,8 @@ __all__ = [
     "__version__",
     # Types
     "AutostepState",
+    "BatchedLearningResult",
+    "BatchedNormalizedResult",
     "IDBDState",
     "LMSState",
     "LearnerState",
@@ -164,7 +170,9 @@ __all__ = [
     "NormalizedLearnerState",
     "NormalizedLinearLearner",
     "run_learning_loop",
+    "run_learning_loop_batched",
     "run_normalized_learning_loop",
+    "run_normalized_learning_loop_batched",
     "metrics_to_dicts",
     # Streams - protocol
     "ScanStream",

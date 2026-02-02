@@ -14,10 +14,10 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory, NormalizerTrackingConfig, NormalizerHistory
+│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory, NormalizerTrackingConfig, NormalizerHistory, BatchedLearningResult, BatchedNormalizedResult
 │   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, run_normalized_learning_loop, metrics_to_dicts
+│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, run_learning_loop_batched, run_normalized_learning_loop, run_normalized_learning_loop_batched, metrics_to_dicts
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -186,6 +186,59 @@ Return value depends on tracking options:
 - step_size_tracking only: `(state, metrics, ss_history)` — 3-tuple
 - normalizer_tracking only: `(state, metrics, norm_history)` — 3-tuple
 - Both: `(state, metrics, ss_history, norm_history)` — 4-tuple
+
+### Batched Learning Loops (vmap-based GPU Parallelization)
+The `run_learning_loop_batched` and `run_normalized_learning_loop_batched` functions use `jax.vmap` to run multiple seeds in parallel, typically achieving 2-5x speedup over sequential execution:
+
+```python
+import jax.random as jr
+from alberta_framework import (
+    LinearLearner, IDBD, RandomWalkStream,
+    run_learning_loop_batched, StepSizeTrackingConfig
+)
+
+stream = RandomWalkStream(feature_dim=10)
+learner = LinearLearner(optimizer=IDBD())
+
+# Run 30 seeds in parallel
+keys = jr.split(jr.key(42), 30)
+result = run_learning_loop_batched(learner, stream, num_steps=10000, keys=keys)
+
+# result.metrics has shape (30, 10000, 3)
+# result.states.weights has shape (30, 10)
+mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average squared error over seeds
+
+# With step-size tracking
+config = StepSizeTrackingConfig(interval=100)
+result = run_learning_loop_batched(
+    learner, stream, num_steps=10000, keys=keys, step_size_tracking=config
+)
+# result.step_size_history.step_sizes has shape (30, 100, 10)
+```
+
+Key features:
+- `jax.vmap` parallelizes over seeds, not steps — memory scales with num_seeds
+- `jax.lax.scan` processes steps sequentially within each seed
+- Returns `BatchedLearningResult` or `BatchedNormalizedResult` NamedTuples
+- Tracking histories get batched shapes: `(num_seeds, num_recordings, ...)`
+- Same initial state used for all seeds (controlled variation via different keys)
+
+For normalized learners:
+```python
+from alberta_framework import (
+    NormalizedLinearLearner, run_normalized_learning_loop_batched,
+    NormalizerTrackingConfig
+)
+
+learner = NormalizedLinearLearner(optimizer=IDBD())
+result = run_normalized_learning_loop_batched(
+    learner, stream, num_steps=10000, keys=keys,
+    step_size_tracking=StepSizeTrackingConfig(interval=100),
+    normalizer_tracking=NormalizerTrackingConfig(interval=100)
+)
+# result.metrics has shape (30, 10000, 4)
+# result.step_size_history and result.normalizer_history both batched
+```
 
 ## Gymnasium Integration
 

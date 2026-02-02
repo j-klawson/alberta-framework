@@ -164,6 +164,45 @@ class NormalizerHistory(NamedTuple):
     recording_indices: Array  # (num_recordings,)
 
 
+class BatchedLearningResult(NamedTuple):
+    """Result from batched learning loop across multiple seeds.
+
+    Used with `run_learning_loop_batched` for vmap-based GPU parallelization.
+
+    Attributes:
+        states: Batched learner states - each array has shape (num_seeds, ...)
+        metrics: Metrics array with shape (num_seeds, num_steps, 3)
+            where columns are [squared_error, error, mean_step_size]
+        step_size_history: Optional step-size history with batched shapes,
+            or None if tracking was disabled
+    """
+
+    states: "LearnerState"  # Batched: each array has shape (num_seeds, ...)
+    metrics: Array  # Shape: (num_seeds, num_steps, 3)
+    step_size_history: StepSizeHistory | None
+
+
+class BatchedNormalizedResult(NamedTuple):
+    """Result from batched normalized learning loop across multiple seeds.
+
+    Used with `run_normalized_learning_loop_batched` for vmap-based GPU parallelization.
+
+    Attributes:
+        states: Batched normalized learner states - each array has shape (num_seeds, ...)
+        metrics: Metrics array with shape (num_seeds, num_steps, 4)
+            where columns are [squared_error, error, mean_step_size, normalizer_mean_var]
+        step_size_history: Optional step-size history with batched shapes,
+            or None if tracking was disabled
+        normalizer_history: Optional normalizer history with batched shapes,
+            or None if tracking was disabled
+    """
+
+    states: "NormalizedLearnerState"  # Batched: each array has shape (num_seeds, ...)
+    metrics: Array  # Shape: (num_seeds, num_steps, 4)
+    step_size_history: StepSizeHistory | None
+    normalizer_history: NormalizerHistory | None
+
+
 def create_lms_state(step_size: float = 0.01) -> LMSState:
     """Create initial LMS optimizer state.
 

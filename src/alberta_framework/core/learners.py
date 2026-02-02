@@ -15,6 +15,8 @@ from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
 from alberta_framework.core.optimizers import LMS, Optimizer
 from alberta_framework.core.types import (
     AutostepState,
+    BatchedLearningResult,
+    BatchedNormalizedResult,
     IDBDState,
     LearnerState,
     LMSState,
@@ -844,6 +846,196 @@ def run_normalized_learning_loop[StreamStateT](
         return final_learner, metrics, norm_history_result
     else:
         return final_learner, metrics
+
+
+def run_learning_loop_batched[StreamStateT](
+    learner: LinearLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    keys: Array,
+    learner_state: LearnerState | None = None,
+    step_size_tracking: StepSizeTrackingConfig | None = None,
+) -> BatchedLearningResult:
+    """Run learning loop across multiple seeds in parallel using jax.vmap.
+
+    This function provides GPU parallelization for multi-seed experiments,
+    typically achieving 2-5x speedup over sequential execution.
+
+    Args:
+        learner: The learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run per seed
+        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        learner_state: Initial state (if None, will be initialized from stream).
+            The same initial state is used for all seeds.
+        step_size_tracking: Optional config for recording per-weight step-sizes.
+            When provided, history arrays have shape (num_seeds, num_recordings, ...)
+
+    Returns:
+        BatchedLearningResult containing:
+            - states: Batched final states with shape (num_seeds, ...) for each array
+            - metrics: Array of shape (num_seeds, num_steps, 3)
+            - step_size_history: Batched history or None if tracking disabled
+
+    Examples:
+    ```python
+    import jax.random as jr
+    from alberta_framework import LinearLearner, IDBD, RandomWalkStream
+    from alberta_framework import run_learning_loop_batched
+
+    stream = RandomWalkStream(feature_dim=10)
+    learner = LinearLearner(optimizer=IDBD())
+
+    # Run 30 seeds in parallel
+    keys = jr.split(jr.key(42), 30)
+    result = run_learning_loop_batched(learner, stream, num_steps=10000, keys=keys)
+
+    # result.metrics has shape (30, 10000, 3)
+    mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average over seeds
+    ```
+    """
+    # Define single-seed function that returns consistent structure
+    def single_seed_run(key: Array) -> tuple[LearnerState, Array, StepSizeHistory | None]:
+        result = run_learning_loop(
+            learner, stream, num_steps, key, learner_state, step_size_tracking
+        )
+        if step_size_tracking is not None:
+            state, metrics, history = result
+            return state, metrics, history
+        else:
+            state, metrics = result
+            # Return None for history to maintain consistent output structure
+            return state, metrics, None
+
+    # vmap over the keys dimension
+    batched_states, batched_metrics, batched_history = jax.vmap(single_seed_run)(keys)
+
+    # Reconstruct batched history if tracking was enabled
+    if step_size_tracking is not None:
+        batched_step_size_history = StepSizeHistory(
+            step_sizes=batched_history.step_sizes,
+            bias_step_sizes=batched_history.bias_step_sizes,
+            recording_indices=batched_history.recording_indices,
+            normalizers=batched_history.normalizers,
+        )
+    else:
+        batched_step_size_history = None
+
+    return BatchedLearningResult(
+        states=batched_states,
+        metrics=batched_metrics,
+        step_size_history=batched_step_size_history,
+    )
+
+
+def run_normalized_learning_loop_batched[StreamStateT](
+    learner: NormalizedLinearLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    keys: Array,
+    learner_state: NormalizedLearnerState | None = None,
+    step_size_tracking: StepSizeTrackingConfig | None = None,
+    normalizer_tracking: NormalizerTrackingConfig | None = None,
+) -> BatchedNormalizedResult:
+    """Run normalized learning loop across multiple seeds in parallel using jax.vmap.
+
+    This function provides GPU parallelization for multi-seed experiments with
+    normalized learners, typically achieving 2-5x speedup over sequential execution.
+
+    Args:
+        learner: The normalized learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run per seed
+        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        learner_state: Initial state (if None, will be initialized from stream).
+            The same initial state is used for all seeds.
+        step_size_tracking: Optional config for recording per-weight step-sizes.
+            When provided, history arrays have shape (num_seeds, num_recordings, ...)
+        normalizer_tracking: Optional config for recording normalizer state.
+            When provided, history arrays have shape (num_seeds, num_recordings, ...)
+
+    Returns:
+        BatchedNormalizedResult containing:
+            - states: Batched final states with shape (num_seeds, ...) for each array
+            - metrics: Array of shape (num_seeds, num_steps, 4)
+            - step_size_history: Batched history or None if tracking disabled
+            - normalizer_history: Batched history or None if tracking disabled
+
+    Examples:
+    ```python
+    import jax.random as jr
+    from alberta_framework import NormalizedLinearLearner, IDBD, RandomWalkStream
+    from alberta_framework import run_normalized_learning_loop_batched
+
+    stream = RandomWalkStream(feature_dim=10)
+    learner = NormalizedLinearLearner(optimizer=IDBD())
+
+    # Run 30 seeds in parallel
+    keys = jr.split(jr.key(42), 30)
+    result = run_normalized_learning_loop_batched(
+        learner, stream, num_steps=10000, keys=keys
+    )
+
+    # result.metrics has shape (30, 10000, 4)
+    mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average over seeds
+    ```
+    """
+    # Define single-seed function that returns consistent structure
+    def single_seed_run(
+        key: Array,
+    ) -> tuple[
+        NormalizedLearnerState, Array, StepSizeHistory | None, NormalizerHistory | None
+    ]:
+        result = run_normalized_learning_loop(
+            learner, stream, num_steps, key, learner_state,
+            step_size_tracking, normalizer_tracking
+        )
+
+        # Unpack based on what tracking was enabled
+        if step_size_tracking is not None and normalizer_tracking is not None:
+            state, metrics, ss_history, norm_history = result
+            return state, metrics, ss_history, norm_history
+        elif step_size_tracking is not None:
+            state, metrics, ss_history = result
+            return state, metrics, ss_history, None
+        elif normalizer_tracking is not None:
+            state, metrics, norm_history = result
+            return state, metrics, None, norm_history
+        else:
+            state, metrics = result
+            return state, metrics, None, None
+
+    # vmap over the keys dimension
+    batched_states, batched_metrics, batched_ss_history, batched_norm_history = (
+        jax.vmap(single_seed_run)(keys)
+    )
+
+    # Reconstruct batched histories if tracking was enabled
+    if step_size_tracking is not None:
+        batched_step_size_history = StepSizeHistory(
+            step_sizes=batched_ss_history.step_sizes,
+            bias_step_sizes=batched_ss_history.bias_step_sizes,
+            recording_indices=batched_ss_history.recording_indices,
+            normalizers=batched_ss_history.normalizers,
+        )
+    else:
+        batched_step_size_history = None
+
+    if normalizer_tracking is not None:
+        batched_normalizer_history = NormalizerHistory(
+            means=batched_norm_history.means,
+            variances=batched_norm_history.variances,
+            recording_indices=batched_norm_history.recording_indices,
+        )
+    else:
+        batched_normalizer_history = None
+
+    return BatchedNormalizedResult(
+        states=batched_states,
+        metrics=batched_metrics,
+        step_size_history=batched_step_size_history,
+        normalizer_history=batched_normalizer_history,
+    )
 
 
 def metrics_to_dicts(metrics: Array, normalized: bool = False) -> list[dict[str, float]]:

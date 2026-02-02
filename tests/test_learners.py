@@ -6,6 +6,8 @@ import pytest
 
 from alberta_framework import (
     Autostep,
+    BatchedLearningResult,
+    BatchedNormalizedResult,
     IDBD,
     LMS,
     LinearLearner,
@@ -17,7 +19,9 @@ from alberta_framework import (
     StepSizeTrackingConfig,
     metrics_to_dicts,
     run_learning_loop,
+    run_learning_loop_batched,
     run_normalized_learning_loop,
+    run_normalized_learning_loop_batched,
 )
 
 
@@ -526,3 +530,248 @@ class TestNormalizedLearningLoopTracking:
         # Should record at steps 0, 25, 50, 75
         expected_indices = jnp.array([0, 25, 50, 75])
         assert jnp.allclose(norm_history.recording_indices, expected_indices)
+
+
+class TestBatchedLearningLoop:
+    """Tests for run_learning_loop_batched."""
+
+    def test_batched_returns_correct_shapes(self, rng_key):
+        """Batched loop should return metrics with shape (num_seeds, num_steps, 3)."""
+        num_seeds = 5
+        num_steps = 100
+        feature_dim = 10
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+
+        result = run_learning_loop_batched(learner, stream, num_steps, keys)
+
+        assert isinstance(result, BatchedLearningResult)
+        assert result.metrics.shape == (num_seeds, num_steps, 3)
+        assert result.states.weights.shape == (num_seeds, feature_dim)
+        assert result.states.bias.shape == (num_seeds,)
+        assert result.step_size_history is None
+
+    def test_batched_matches_sequential(self, rng_key):
+        """Batched results should match sequential execution."""
+        num_seeds = 3
+        num_steps = 50
+        feature_dim = 5
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+
+        # Run batched
+        batched_result = run_learning_loop_batched(learner, stream, num_steps, keys)
+
+        # Run sequential
+        sequential_metrics = []
+        for i in range(num_seeds):
+            _, metrics = run_learning_loop(learner, stream, num_steps, keys[i])
+            sequential_metrics.append(metrics)
+        sequential_metrics = jnp.stack(sequential_metrics)
+
+        # Should match
+        assert jnp.allclose(batched_result.metrics, sequential_metrics)
+
+    def test_batched_with_step_size_tracking(self, rng_key):
+        """Batched loop should support step-size tracking."""
+        num_seeds = 4
+        num_steps = 100
+        feature_dim = 8
+        interval = 10
+        expected_recordings = num_steps // interval
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = LinearLearner(optimizer=Autostep())
+        keys = jr.split(rng_key, num_seeds)
+        config = StepSizeTrackingConfig(interval=interval)
+
+        result = run_learning_loop_batched(
+            learner, stream, num_steps, keys, step_size_tracking=config
+        )
+
+        assert result.step_size_history is not None
+        assert result.step_size_history.step_sizes.shape == (
+            num_seeds, expected_recordings, feature_dim
+        )
+        assert result.step_size_history.bias_step_sizes.shape == (
+            num_seeds, expected_recordings
+        )
+        assert result.step_size_history.recording_indices.shape == (
+            num_seeds, expected_recordings
+        )
+        # Autostep should have normalizers tracked
+        assert result.step_size_history.normalizers is not None
+        assert result.step_size_history.normalizers.shape == (
+            num_seeds, expected_recordings, feature_dim
+        )
+
+    def test_batched_without_tracking_has_none_history(self, rng_key):
+        """When tracking disabled, step_size_history should be None."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, 3)
+
+        result = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys)
+
+        assert result.step_size_history is None
+
+    def test_batched_deterministic_with_same_keys(self, rng_key):
+        """Same keys should produce same results."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, 4)
+
+        result1 = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys)
+        result2 = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys)
+
+        assert jnp.allclose(result1.metrics, result2.metrics)
+        assert jnp.allclose(result1.states.weights, result2.states.weights)
+
+    def test_batched_different_keys_different_results(self, rng_key):
+        """Different keys should produce different results."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=IDBD())
+
+        keys1 = jr.split(jr.key(42), 3)
+        keys2 = jr.split(jr.key(123), 3)
+
+        result1 = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys1)
+        result2 = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys2)
+
+        assert not jnp.allclose(result1.metrics, result2.metrics)
+
+    def test_batched_with_lms_optimizer(self, rng_key):
+        """Batched loop should work with LMS optimizer."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner(optimizer=LMS(step_size=0.01))
+        keys = jr.split(rng_key, 3)
+
+        result = run_learning_loop_batched(learner, stream, num_steps=50, keys=keys)
+
+        assert result.metrics.shape == (3, 50, 3)
+        # LMS doesn't report mean_step_size in metrics (defaults to 0.0)
+        assert jnp.allclose(result.metrics[:, :, 2], 0.0)
+
+
+class TestBatchedNormalizedLearningLoop:
+    """Tests for run_normalized_learning_loop_batched."""
+
+    def test_normalized_batched_returns_correct_shapes(self, rng_key):
+        """Batched normalized loop should return metrics with shape (num_seeds, num_steps, 4)."""
+        num_seeds = 5
+        num_steps = 100
+        feature_dim = 10
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+
+        result = run_normalized_learning_loop_batched(learner, stream, num_steps, keys)
+
+        assert isinstance(result, BatchedNormalizedResult)
+        assert result.metrics.shape == (num_seeds, num_steps, 4)
+        assert result.states.learner_state.weights.shape == (num_seeds, feature_dim)
+        assert result.states.normalizer_state.mean.shape == (num_seeds, feature_dim)
+        assert result.step_size_history is None
+        assert result.normalizer_history is None
+
+    def test_normalized_batched_matches_sequential(self, rng_key):
+        """Batched normalized results should match sequential execution."""
+        num_seeds = 3
+        num_steps = 50
+        feature_dim = 5
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+
+        # Run batched
+        batched_result = run_normalized_learning_loop_batched(
+            learner, stream, num_steps, keys
+        )
+
+        # Run sequential
+        sequential_metrics = []
+        for i in range(num_seeds):
+            _, metrics = run_normalized_learning_loop(learner, stream, num_steps, keys[i])
+            sequential_metrics.append(metrics)
+        sequential_metrics = jnp.stack(sequential_metrics)
+
+        # Should match
+        assert jnp.allclose(batched_result.metrics, sequential_metrics)
+
+    def test_normalized_batched_with_both_tracking(self, rng_key):
+        """Batched normalized loop should support both tracking options."""
+        num_seeds = 4
+        num_steps = 100
+        feature_dim = 8
+        ss_interval = 10
+        norm_interval = 20
+        ss_recordings = num_steps // ss_interval
+        norm_recordings = num_steps // norm_interval
+
+        stream = RandomWalkStream(feature_dim=feature_dim)
+        learner = NormalizedLinearLearner(optimizer=Autostep())
+        keys = jr.split(rng_key, num_seeds)
+        ss_config = StepSizeTrackingConfig(interval=ss_interval)
+        norm_config = NormalizerTrackingConfig(interval=norm_interval)
+
+        result = run_normalized_learning_loop_batched(
+            learner, stream, num_steps, keys,
+            step_size_tracking=ss_config, normalizer_tracking=norm_config
+        )
+
+        # Step-size history
+        assert result.step_size_history is not None
+        assert result.step_size_history.step_sizes.shape == (
+            num_seeds, ss_recordings, feature_dim
+        )
+        # Autostep normalizers
+        assert result.step_size_history.normalizers is not None
+
+        # Normalizer history
+        assert result.normalizer_history is not None
+        assert result.normalizer_history.means.shape == (
+            num_seeds, norm_recordings, feature_dim
+        )
+        assert result.normalizer_history.variances.shape == (
+            num_seeds, norm_recordings, feature_dim
+        )
+
+    def test_normalized_batched_step_size_only(self, rng_key):
+        """Batched normalized loop with only step-size tracking."""
+        num_seeds = 3
+        num_steps = 50
+
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+        ss_config = StepSizeTrackingConfig(interval=10)
+
+        result = run_normalized_learning_loop_batched(
+            learner, stream, num_steps, keys, step_size_tracking=ss_config
+        )
+
+        assert result.step_size_history is not None
+        assert result.normalizer_history is None
+
+    def test_normalized_batched_normalizer_only(self, rng_key):
+        """Batched normalized loop with only normalizer tracking."""
+        num_seeds = 3
+        num_steps = 50
+
+        stream = RandomWalkStream(feature_dim=5)
+        learner = NormalizedLinearLearner(optimizer=IDBD())
+        keys = jr.split(rng_key, num_seeds)
+        norm_config = NormalizerTrackingConfig(interval=10)
+
+        result = run_normalized_learning_loop_batched(
+            learner, stream, num_steps, keys, normalizer_tracking=norm_config
+        )
+
+        assert result.step_size_history is None
+        assert result.normalizer_history is not None
