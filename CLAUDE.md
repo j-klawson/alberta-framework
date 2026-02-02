@@ -465,3 +465,9 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 1. PyPI project → Settings → Publishing → Add GitHub publisher
 2. Repository: `j-klawson/alberta-framework`, Workflow: `publish.yml`, Environment: `pypi`
 3. Repeat on TestPyPI with environment: `testpypi`
+
+## Changelog
+
+### v0.2.2 (2026-02-02)
+- Fixed mypy type errors in `run_learning_loop_batched` and `run_normalized_learning_loop_batched` functions
+- Added `typing.cast` to properly handle conditional return type unpacking in batched learning loops

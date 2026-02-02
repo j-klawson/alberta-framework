@@ -5,7 +5,7 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -900,10 +900,12 @@ def run_learning_loop_batched[StreamStateT](
             learner, stream, num_steps, key, learner_state, step_size_tracking
         )
         if step_size_tracking is not None:
-            state, metrics, history = result
+            state, metrics, history = cast(
+                tuple[LearnerState, Array, StepSizeHistory], result
+            )
             return state, metrics, history
         else:
-            state, metrics = result
+            state, metrics = cast(tuple[LearnerState, Array], result)
             # Return None for history to maintain consistent output structure
             return state, metrics, None
 
@@ -911,7 +913,7 @@ def run_learning_loop_batched[StreamStateT](
     batched_states, batched_metrics, batched_history = jax.vmap(single_seed_run)(keys)
 
     # Reconstruct batched history if tracking was enabled
-    if step_size_tracking is not None:
+    if step_size_tracking is not None and batched_history is not None:
         batched_step_size_history = StepSizeHistory(
             step_sizes=batched_history.step_sizes,
             bias_step_sizes=batched_history.bias_step_sizes,
@@ -993,16 +995,23 @@ def run_normalized_learning_loop_batched[StreamStateT](
 
         # Unpack based on what tracking was enabled
         if step_size_tracking is not None and normalizer_tracking is not None:
-            state, metrics, ss_history, norm_history = result
+            state, metrics, ss_history, norm_history = cast(
+                tuple[NormalizedLearnerState, Array, StepSizeHistory, NormalizerHistory],
+                result,
+            )
             return state, metrics, ss_history, norm_history
         elif step_size_tracking is not None:
-            state, metrics, ss_history = result
+            state, metrics, ss_history = cast(
+                tuple[NormalizedLearnerState, Array, StepSizeHistory], result
+            )
             return state, metrics, ss_history, None
         elif normalizer_tracking is not None:
-            state, metrics, norm_history = result
+            state, metrics, norm_history = cast(
+                tuple[NormalizedLearnerState, Array, NormalizerHistory], result
+            )
             return state, metrics, None, norm_history
         else:
-            state, metrics = result
+            state, metrics = cast(tuple[NormalizedLearnerState, Array], result)
             return state, metrics, None, None
 
     # vmap over the keys dimension
@@ -1011,7 +1020,7 @@ def run_normalized_learning_loop_batched[StreamStateT](
     )
 
     # Reconstruct batched histories if tracking was enabled
-    if step_size_tracking is not None:
+    if step_size_tracking is not None and batched_ss_history is not None:
         batched_step_size_history = StepSizeHistory(
             step_sizes=batched_ss_history.step_sizes,
             bias_step_sizes=batched_ss_history.bias_step_sizes,
@@ -1021,7 +1030,7 @@ def run_normalized_learning_loop_batched[StreamStateT](
     else:
         batched_step_size_history = None
 
-    if normalizer_tracking is not None:
+    if normalizer_tracking is not None and batched_norm_history is not None:
         batched_normalizer_history = NormalizerHistory(
             means=batched_norm_history.means,
             variances=batched_norm_history.variances,
