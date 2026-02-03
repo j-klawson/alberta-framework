@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "alberta-framework"
-version = "0.3.0"
+version = "0.3.2"
 description = "Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -71,6 +71,8 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+# F722: Syntax error in forward annotation - ruff doesn't understand jaxtyping shape annotations
+ignore = ["F722"]
 
 [tool.mypy]
 python_version = "3.13"

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import chex
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Float, Int, PRNGKeyArray
+from jaxtyping import Float, Int
 
 if TYPE_CHECKING:
     from alberta_framework.core.learners import NormalizedLearnerState

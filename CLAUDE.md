@@ -470,6 +470,11 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 
 ## Changelog
 
+### v0.3.2 (2026-02-03)
+- **FIX**: Relaxed test tolerance in batched vs sequential comparison tests (`rtol=1e-5`) to account for floating-point differences between vmap and sequential execution paths
+- **FIX**: Added `ignore = ["F722"]` to ruff config for jaxtyping shape annotation syntax that ruff doesn't understand
+- **FIX**: Removed unused `PRNGKeyArray` import from `core/types.py`
+
 ### v0.3.0 (2026-02-03)
 - **FEATURE**: Migrated all state types from NamedTuple to `@chex.dataclass(frozen=True)` for DeepMind-style JAX compatibility
 - **FEATURE**: Added jaxtyping shape annotations for compile-time type safety (`Float[Array, " feature_dim"]`, `PRNGKeyArray`, etc.)
