@@ -5,11 +5,13 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
-from typing import NamedTuple, cast
+from typing import cast
 
+import chex
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jaxtyping import Float
 
 from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
 from alberta_framework.core.optimizers import LMS, Optimizer
@@ -33,7 +35,9 @@ from alberta_framework.streams.base import ScanStream
 # Type alias for any optimizer type
 AnyOptimizer = Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
 
-class UpdateResult(NamedTuple):
+
+@chex.dataclass(frozen=True)
+class UpdateResult:
     """Result of a learner update step.
 
     Attributes:
@@ -45,8 +49,38 @@ class UpdateResult(NamedTuple):
 
     state: LearnerState
     prediction: Prediction
-    error: Array
-    metrics: Array
+    error: Float[Array, ""]
+    metrics: Float[Array, " 3"]
+
+
+@chex.dataclass(frozen=True)
+class NormalizedLearnerState:
+    """State for a learner with online feature normalization.
+
+    Attributes:
+        learner_state: Underlying learner state (weights, bias, optimizer)
+        normalizer_state: Online normalizer state (mean, var estimates)
+    """
+
+    learner_state: LearnerState
+    normalizer_state: NormalizerState
+
+
+@chex.dataclass(frozen=True)
+class NormalizedUpdateResult:
+    """Result of a normalized learner update step.
+
+    Attributes:
+        state: Updated normalized learner state
+        prediction: Prediction made before update
+        error: Prediction error
+        metrics: Array of metrics [squared_error, error, mean_step_size, normalizer_mean_var]
+    """
+
+    state: NormalizedLearnerState
+    prediction: Prediction
+    error: Float[Array, ""]
+    metrics: Float[Array, " 4"]
 
 
 class LinearLearner:
@@ -133,8 +167,7 @@ class LinearLearner:
         # Note: type ignore needed because we can't statically prove optimizer_state
         # matches the optimizer's expected state type (though they will at runtime)
         opt_update = self._optimizer.update(
-            state.optimizer_state,  # type: ignore[arg-type]
-            error,
+            state.optimizer_state,            error,
             observation,
         )
 
@@ -275,12 +308,12 @@ def run_learning_loop[StreamStateT](
             opt_state = result.state.optimizer_state
             if hasattr(opt_state, "log_step_sizes"):
                 # IDBD stores log step-sizes
-                weight_ss = jnp.exp(opt_state.log_step_sizes)  # type: ignore[union-attr]
-                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+                weight_ss = jnp.exp(opt_state.log_step_sizes)
+                bias_ss = opt_state.bias_step_size
             elif hasattr(opt_state, "step_sizes"):
                 # Autostep stores step-sizes directly
-                weight_ss = opt_state.step_sizes  # type: ignore[union-attr]
-                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+                weight_ss = opt_state.step_sizes
+                bias_ss = opt_state.bias_step_size
             else:
                 # LMS has a single fixed step-size
                 weight_ss = jnp.full(feature_dim, opt_state.step_size)
@@ -316,8 +349,7 @@ def run_learning_loop[StreamStateT](
                 new_norm_history = jax.lax.cond(
                     should_record,
                     lambda _: norm_history.at[recording_idx].set(
-                        opt_state.normalizers  # type: ignore[union-attr]
-                    ),
+                        opt_state.normalizers                    ),
                     lambda _: norm_history,
                     None,
                 )
@@ -359,34 +391,6 @@ def run_learning_loop[StreamStateT](
         )
 
         return final_learner, metrics, history
-
-
-class NormalizedLearnerState(NamedTuple):
-    """State for a learner with online feature normalization.
-
-    Attributes:
-        learner_state: Underlying learner state (weights, bias, optimizer)
-        normalizer_state: Online normalizer state (mean, var estimates)
-    """
-
-    learner_state: LearnerState
-    normalizer_state: NormalizerState
-
-
-class NormalizedUpdateResult(NamedTuple):
-    """Result of a normalized learner update step.
-
-    Attributes:
-        state: Updated normalized learner state
-        prediction: Prediction made before update
-        error: Prediction error
-        metrics: Array of metrics [squared_error, error, mean_step_size, normalizer_mean_var]
-    """
-
-    state: NormalizedLearnerState
-    prediction: Prediction
-    error: Array
-    metrics: Array
 
 
 class NormalizedLinearLearner:
@@ -702,12 +706,12 @@ def run_normalized_learning_loop[StreamStateT](
             opt_state = result.state.learner_state.optimizer_state
             if hasattr(opt_state, "log_step_sizes"):
                 # IDBD stores log step-sizes
-                weight_ss = jnp.exp(opt_state.log_step_sizes)  # type: ignore[union-attr]
-                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+                weight_ss = jnp.exp(opt_state.log_step_sizes)
+                bias_ss = opt_state.bias_step_size
             elif hasattr(opt_state, "step_sizes"):
                 # Autostep stores step-sizes directly
-                weight_ss = opt_state.step_sizes  # type: ignore[union-attr]
-                bias_ss = opt_state.bias_step_size  # type: ignore[union-attr]
+                weight_ss = opt_state.step_sizes
+                bias_ss = opt_state.bias_step_size
             else:
                 # LMS has a single fixed step-size
                 weight_ss = jnp.full(feature_dim, opt_state.step_size)
@@ -741,8 +745,7 @@ def run_normalized_learning_loop[StreamStateT](
                 new_ss_norm = jax.lax.cond(
                     should_record_ss,
                     lambda _: ss_norm.at[recording_idx].set(
-                        opt_state.normalizers  # type: ignore[union-attr]
-                    ),
+                        opt_state.normalizers                    ),
                     lambda _: ss_norm,
                     None,
                 )
@@ -825,17 +828,14 @@ def run_normalized_learning_loop[StreamStateT](
         ss_history_result = StepSizeHistory(
             step_sizes=final_ss_hist,
             bias_step_sizes=final_ss_bias_hist,
-            recording_indices=final_ss_rec,  # type: ignore[arg-type]
-            normalizers=final_ss_norm,
+            recording_indices=final_ss_rec,            normalizers=final_ss_norm,
         )
 
     norm_history_result = None
     if normalizer_tracking is not None and final_n_means is not None:
         norm_history_result = NormalizerHistory(
             means=final_n_means,
-            variances=final_n_vars,  # type: ignore[arg-type]
-            recording_indices=final_n_rec,  # type: ignore[arg-type]
-        )
+            variances=final_n_vars,            recording_indices=final_n_rec,        )
 
     # Return appropriate tuple based on what was tracked
     if ss_history_result is not None and norm_history_result is not None:

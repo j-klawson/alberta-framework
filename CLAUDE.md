@@ -70,7 +70,8 @@ mkdocs build          # Build static site to site/
 ## Development Guidelines
 
 ### Design Principles
-- **Immutable State**: All state uses NamedTuples for JAX compatibility
+- **Immutable State**: All state uses `@chex.dataclass(frozen=True)` for JAX PyTree compatibility
+- **Type Safety**: jaxtyping annotations for shape checking (`Float[Array, " feature_dim"]`)
 - **Functional Style**: Pure functions enable `jit`, `vmap`, `jax.lax.scan`
 - **Scan-Based Learning**: Learning loops use `jax.lax.scan` for JIT-compiled training
 - **Composition**: Learners accept optimizers as parameters
@@ -85,6 +86,7 @@ mkdocs build          # Build static site to site/
 ### Testing
 - Tests are in `tests/` directory
 - Use pytest fixtures from `conftest.py`
+- Use chex assertions: `chex.assert_shape()`, `chex.assert_trees_all_close()`, `chex.assert_tree_all_finite()`
 - All tests should pass before committing
 
 ## Key Algorithms
@@ -467,6 +469,13 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.3.0 (2026-02-03)
+- **FEATURE**: Migrated all state types from NamedTuple to `@chex.dataclass(frozen=True)` for DeepMind-style JAX compatibility
+- **FEATURE**: Added jaxtyping shape annotations for compile-time type safety (`Float[Array, " feature_dim"]`, `PRNGKeyArray`, etc.)
+- **FEATURE**: Updated test suite to use chex assertions (`chex.assert_shape`, `chex.assert_tree_all_finite`, `chex.assert_trees_all_close`)
+- **DEPS**: Added `chex>=0.1.86` and `jaxtyping>=0.2.28` as required dependencies
+- **DEPS**: Added `beartype>=0.18.0` as optional dev dependency for runtime type checking
 
 ### v0.2.2 (2026-02-02)
 - Fixed mypy type errors in `run_learning_loop_batched` and `run_normalized_learning_loop_batched` functions

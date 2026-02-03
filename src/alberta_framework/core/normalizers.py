@@ -6,13 +6,14 @@ and variance at every time step, following the principle of temporal uniformity.
 Reference: Welford's online algorithm for numerical stability.
 """
 
-from typing import NamedTuple
-
+import chex
 import jax.numpy as jnp
 from jax import Array
+from jaxtyping import Float
 
 
-class NormalizerState(NamedTuple):
+@chex.dataclass(frozen=True)
+class NormalizerState:
     """State for online feature normalization.
 
     Uses Welford's online algorithm for numerically stable estimation
@@ -25,10 +26,10 @@ class NormalizerState(NamedTuple):
         decay: Exponential decay factor for estimates (1.0 = no decay, pure online)
     """
 
-    mean: Array  # Shape: (feature_dim,)
-    var: Array  # Shape: (feature_dim,)
-    sample_count: Array  # Scalar
-    decay: Array  # Scalar
+    mean: Float[Array, " feature_dim"]
+    var: Float[Array, " feature_dim"]
+    sample_count: Float[Array, ""]
+    decay: Float[Array, ""]
 
 
 class OnlineNormalizer:

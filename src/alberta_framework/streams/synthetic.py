@@ -7,17 +7,20 @@ track and adapt.
 All streams use JAX-compatible pure functions that work with jax.lax.scan.
 """
 
-from typing import Any, NamedTuple
+from typing import Any
 
+import chex
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
+from jaxtyping import Float, Int, PRNGKeyArray
 
 from alberta_framework.core.types import TimeStep
 from alberta_framework.streams.base import ScanStream
 
 
-class RandomWalkState(NamedTuple):
+@chex.dataclass(frozen=True)
+class RandomWalkState:
     """State for RandomWalkStream.
 
     Attributes:
@@ -25,8 +28,8 @@ class RandomWalkState(NamedTuple):
         true_weights: Current true target weights
     """
 
-    key: Array
-    true_weights: Array
+    key: PRNGKeyArray
+    true_weights: Float[Array, " feature_dim"]
 
 
 class RandomWalkStream:
@@ -110,7 +113,8 @@ class RandomWalkStream:
         return timestep, new_state
 
 
-class AbruptChangeState(NamedTuple):
+@chex.dataclass(frozen=True)
+class AbruptChangeState:
     """State for AbruptChangeStream.
 
     Attributes:
@@ -119,9 +123,9 @@ class AbruptChangeState(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    true_weights: Array
-    step_count: Array
+    key: PRNGKeyArray
+    true_weights: Float[Array, " feature_dim"]
+    step_count: Int[Array, ""]
 
 
 class AbruptChangeStream:
@@ -219,7 +223,8 @@ class AbruptChangeStream:
         return timestep, new_state
 
 
-class SuttonExperiment1State(NamedTuple):
+@chex.dataclass(frozen=True)
+class SuttonExperiment1State:
     """State for SuttonExperiment1Stream.
 
     Attributes:
@@ -228,9 +233,9 @@ class SuttonExperiment1State(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    signs: Array
-    step_count: Array
+    key: PRNGKeyArray
+    signs: Float[Array, " num_relevant"]
+    step_count: Int[Array, ""]
 
 
 class SuttonExperiment1Stream:
@@ -341,7 +346,8 @@ class SuttonExperiment1Stream:
         return timestep, new_state
 
 
-class CyclicState(NamedTuple):
+@chex.dataclass(frozen=True)
+class CyclicState:
     """State for CyclicStream.
 
     Attributes:
@@ -350,9 +356,9 @@ class CyclicState(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    configurations: Array
-    step_count: Array
+    key: PRNGKeyArray
+    configurations: Float[Array, "num_configs feature_dim"]
+    step_count: Int[Array, ""]
 
 
 class CyclicStream:
@@ -452,7 +458,8 @@ class CyclicStream:
         return timestep, new_state
 
 
-class PeriodicChangeState(NamedTuple):
+@chex.dataclass(frozen=True)
+class PeriodicChangeState:
     """State for PeriodicChangeStream.
 
     Attributes:
@@ -462,10 +469,10 @@ class PeriodicChangeState(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    base_weights: Array
-    phases: Array
-    step_count: Array
+    key: PRNGKeyArray
+    base_weights: Float[Array, " feature_dim"]
+    phases: Float[Array, " feature_dim"]
+    step_count: Int[Array, ""]
 
 
 class PeriodicChangeStream:
@@ -573,7 +580,8 @@ class PeriodicChangeStream:
         return timestep, new_state
 
 
-class ScaledStreamState(NamedTuple):
+@chex.dataclass(frozen=True)
+class ScaledStreamState:
     """State for ScaledStreamWrapper.
 
     Attributes:
@@ -714,7 +722,8 @@ def make_scale_range(
         return jnp.linspace(min_scale, max_scale, feature_dim, dtype=jnp.float32)
 
 
-class DynamicScaleShiftState(NamedTuple):
+@chex.dataclass(frozen=True)
+class DynamicScaleShiftState:
     """State for DynamicScaleShiftStream.
 
     Attributes:
@@ -724,10 +733,10 @@ class DynamicScaleShiftState(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    true_weights: Array
-    current_scales: Array
-    step_count: Array
+    key: PRNGKeyArray
+    true_weights: Float[Array, " feature_dim"]
+    current_scales: Float[Array, " feature_dim"]
+    step_count: Int[Array, ""]
 
 
 class DynamicScaleShiftStream:
@@ -858,7 +867,8 @@ class DynamicScaleShiftStream:
         return timestep, new_state
 
 
-class ScaleDriftState(NamedTuple):
+@chex.dataclass(frozen=True)
+class ScaleDriftState:
     """State for ScaleDriftStream.
 
     Attributes:
@@ -868,10 +878,10 @@ class ScaleDriftState(NamedTuple):
         step_count: Number of steps taken
     """
 
-    key: Array
-    true_weights: Array
-    log_scales: Array
-    step_count: Array
+    key: PRNGKeyArray
+    true_weights: Float[Array, " feature_dim"]
+    log_scales: Float[Array, " feature_dim"]
+    step_count: Int[Array, ""]
 
 
 class ScaleDriftStream:

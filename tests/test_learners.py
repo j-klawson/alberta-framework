@@ -1,5 +1,6 @@
 """Tests for LinearLearner."""
 
+import chex
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -33,9 +34,9 @@ class TestLinearLearner:
         learner = LinearLearner()
         state = learner.init(feature_dim)
 
-        assert state.weights.shape == (feature_dim,)
-        assert jnp.allclose(state.weights, 0.0)
-        assert jnp.isclose(state.bias, 0.0)
+        chex.assert_shape(state.weights, (feature_dim,))
+        chex.assert_trees_all_close(state.weights, jnp.zeros(feature_dim))
+        chex.assert_trees_all_close(state.bias, jnp.array(0.0))
 
     def test_predict_returns_correct_shape(self, feature_dim, sample_observation):
         """Prediction should return scalar (as 1D array)."""
@@ -44,7 +45,7 @@ class TestLinearLearner:
 
         prediction = learner.predict(state, sample_observation)
 
-        assert prediction.shape == (1,)
+        chex.assert_shape(prediction, (1,))
 
     def test_predict_with_zero_weights_is_bias(self, feature_dim, sample_observation):
         """With zero weights, prediction should equal bias."""
@@ -53,7 +54,7 @@ class TestLinearLearner:
 
         prediction = learner.predict(state, sample_observation)
 
-        assert jnp.isclose(prediction[0], state.bias)
+        chex.assert_trees_all_close(prediction[0], state.bias)
 
     def test_update_reduces_error(self, feature_dim, sample_observation, sample_target):
         """Update should move prediction closer to target."""
@@ -83,7 +84,7 @@ class TestLinearLearner:
         result = learner.update(state, sample_observation, sample_target)
 
         # Metrics are now an array [squared_error, error, mean_step_size]
-        assert result.metrics.shape == (3,)
+        chex.assert_shape(result.metrics, (3,))
         assert result.metrics[0] >= 0  # squared_error
 
     def test_works_with_idbd_optimizer(self, feature_dim, sample_observation, sample_target):
@@ -95,7 +96,7 @@ class TestLinearLearner:
 
         assert result.state is not None
         # Metrics array: [squared_error, error, mean_step_size]
-        assert result.metrics.shape == (3,)
+        chex.assert_shape(result.metrics, (3,))
 
 
 class TestRunLearningLoop:
@@ -110,7 +111,7 @@ class TestRunLearningLoop:
         _, metrics = run_learning_loop(learner, stream, num_steps, rng_key)
 
         # Metrics is now an array of shape (num_steps, 3)
-        assert metrics.shape == (num_steps, 3)
+        chex.assert_shape(metrics, (num_steps, 3))
 
     def test_returns_valid_final_state(self, rng_key):
         """Final state should have correct structure."""
@@ -119,8 +120,8 @@ class TestRunLearningLoop:
 
         state, _ = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
 
-        assert state.weights.shape == (5,)
-        assert jnp.all(jnp.isfinite(state.weights))
+        chex.assert_shape(state.weights, (5,))
+        chex.assert_tree_all_finite(state.weights)
 
     def test_can_resume_from_existing_state(self, rng_key):
         """Should be able to continue from a previous state."""
@@ -137,7 +138,8 @@ class TestRunLearningLoop:
         )
 
         # Weights should have changed
-        assert not jnp.allclose(state1.weights, state2.weights)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(state1.weights, state2.weights)
 
     def test_error_decreases_on_stationary_target(self, rng_key):
         """On a stationary target, error should decrease over time."""
@@ -164,8 +166,8 @@ class TestRunLearningLoop:
         state1, metrics1 = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
         state2, metrics2 = run_learning_loop(learner, stream, num_steps=50, key=rng_key)
 
-        assert jnp.allclose(state1.weights, state2.weights)
-        assert jnp.allclose(metrics1, metrics2)
+        chex.assert_trees_all_close(state1.weights, state2.weights)
+        chex.assert_trees_all_close(metrics1, metrics2)
 
 
 class TestStepSizeTracking:
@@ -214,9 +216,9 @@ class TestStepSizeTracking:
             learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
         )
 
-        assert history.step_sizes.shape == (expected_recordings, feature_dim)
-        assert history.bias_step_sizes.shape == (expected_recordings,)
-        assert history.recording_indices.shape == (expected_recordings,)
+        chex.assert_shape(history.step_sizes, (expected_recordings, feature_dim))
+        chex.assert_shape(history.bias_step_sizes, (expected_recordings,))
+        chex.assert_shape(history.recording_indices, (expected_recordings,))
 
     def test_lms_returns_constant_step_sizes(self, rng_key):
         """LMS should return constant step-sizes throughout training."""
@@ -230,8 +232,8 @@ class TestStepSizeTracking:
         )
 
         # All step-sizes should be equal to the fixed step_size
-        assert jnp.allclose(history.step_sizes, step_size)
-        assert jnp.allclose(history.bias_step_sizes, step_size)
+        chex.assert_trees_all_close(history.step_sizes, jnp.full_like(history.step_sizes, step_size))
+        chex.assert_trees_all_close(history.bias_step_sizes, jnp.full_like(history.bias_step_sizes, step_size))
 
     def test_idbd_step_sizes_evolve(self, rng_key):
         """IDBD step-sizes should change over training."""
@@ -275,10 +277,10 @@ class TestStepSizeTracking:
             learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
         )
 
-        assert history.step_sizes.shape == (num_steps, feature_dim)
+        chex.assert_shape(history.step_sizes, (num_steps, feature_dim))
         # Recording indices should be 0, 1, 2, ..., num_steps-1
         expected_indices = jnp.arange(num_steps)
-        assert jnp.allclose(history.recording_indices, expected_indices)
+        chex.assert_trees_all_close(history.recording_indices, expected_indices)
 
     def test_interval_equals_num_steps_records_once(self, rng_key):
         """Interval equal to num_steps should record once at step 0."""
@@ -292,7 +294,7 @@ class TestStepSizeTracking:
             learner, stream, num_steps=num_steps, key=rng_key, step_size_tracking=config
         )
 
-        assert history.step_sizes.shape == (1, feature_dim)
+        chex.assert_shape(history.step_sizes, (1, feature_dim))
         assert history.recording_indices[0] == 0
 
     def test_invalid_interval_zero_raises_error(self, rng_key):
@@ -344,7 +346,7 @@ class TestStepSizeTracking:
 
         # Should record at steps 0, 25, 50, 75
         expected_indices = jnp.array([0, 25, 50, 75])
-        assert jnp.allclose(history.recording_indices, expected_indices)
+        chex.assert_trees_all_close(history.recording_indices, expected_indices)
 
     def test_autostep_normalizers_tracked(self, rng_key):
         """Autostep should track normalizers (v_i) in history."""
@@ -359,7 +361,7 @@ class TestStepSizeTracking:
 
         # Autostep should have normalizers tracked
         assert history.normalizers is not None
-        assert history.normalizers.shape == history.step_sizes.shape
+        chex.assert_equal_shape([history.normalizers, history.step_sizes])
 
     def test_idbd_normalizers_none(self, rng_key):
         """IDBD should not track normalizers (only Autostep has v_i)."""
@@ -403,7 +405,7 @@ class TestNormalizedLearningLoopTracking:
         assert len(result) == 2
         state, metrics = result
         assert state is not None
-        assert metrics.shape == (100, 4)  # 4 columns for normalized learner
+        chex.assert_shape(metrics, (100, 4))  # 4 columns for normalized learner
 
     def test_step_size_tracking_returns_3_tuple(self, rng_key):
         """With step_size_tracking, should return (state, metrics, ss_history)."""
@@ -418,9 +420,9 @@ class TestNormalizedLearningLoopTracking:
         assert len(result) == 3
         state, metrics, ss_history = result
         assert state is not None
-        assert metrics.shape == (100, 4)
+        chex.assert_shape(metrics, (100, 4))
         assert isinstance(ss_history, StepSizeHistory)
-        assert ss_history.step_sizes.shape == (10, 5)
+        chex.assert_shape(ss_history.step_sizes, (10, 5))
 
     def test_normalizer_tracking_returns_3_tuple(self, rng_key):
         """With normalizer_tracking, should return (state, metrics, norm_history)."""
@@ -435,10 +437,10 @@ class TestNormalizedLearningLoopTracking:
         assert len(result) == 3
         state, metrics, norm_history = result
         assert state is not None
-        assert metrics.shape == (100, 4)
+        chex.assert_shape(metrics, (100, 4))
         assert isinstance(norm_history, NormalizerHistory)
-        assert norm_history.means.shape == (10, 5)
-        assert norm_history.variances.shape == (10, 5)
+        chex.assert_shape(norm_history.means, (10, 5))
+        chex.assert_shape(norm_history.variances, (10, 5))
 
     def test_both_tracking_returns_4_tuple(self, rng_key):
         """With both tracking options, should return 4-tuple."""
@@ -455,12 +457,12 @@ class TestNormalizedLearningLoopTracking:
         assert len(result) == 4
         state, metrics, ss_history, norm_history = result
         assert state is not None
-        assert metrics.shape == (100, 4)
+        chex.assert_shape(metrics, (100, 4))
         assert isinstance(ss_history, StepSizeHistory)
         assert isinstance(norm_history, NormalizerHistory)
         # Different intervals
-        assert ss_history.step_sizes.shape == (10, 5)  # 100 // 10
-        assert norm_history.means.shape == (5, 5)  # 100 // 20
+        chex.assert_shape(ss_history.step_sizes, (10, 5))  # 100 // 10
+        chex.assert_shape(norm_history.means, (5, 5))  # 100 // 20
 
     def test_autostep_normalizers_tracked_in_normalized_loop(self, rng_key):
         """Autostep's v_i should be tracked in normalized learning loop."""
@@ -475,7 +477,7 @@ class TestNormalizedLearningLoopTracking:
 
         # Autostep should have normalizers tracked
         assert ss_history.normalizers is not None
-        assert ss_history.normalizers.shape == ss_history.step_sizes.shape
+        chex.assert_equal_shape([ss_history.normalizers, ss_history.step_sizes])
 
     def test_normalizer_history_tracks_adaptation(self, rng_key):
         """Normalizer history should capture mean/var adaptation over time."""
@@ -491,7 +493,8 @@ class TestNormalizedLearningLoopTracking:
         first_means = norm_history.means[0]
         last_means = norm_history.means[-1]
         # At least some features should have different means
-        assert not jnp.allclose(first_means, last_means, atol=0.1)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(first_means, last_means, atol=0.1)
 
     def test_normalizer_tracking_invalid_interval_raises(self, rng_key):
         """Invalid normalizer tracking interval should raise ValueError."""
@@ -529,7 +532,7 @@ class TestNormalizedLearningLoopTracking:
 
         # Should record at steps 0, 25, 50, 75
         expected_indices = jnp.array([0, 25, 50, 75])
-        assert jnp.allclose(norm_history.recording_indices, expected_indices)
+        chex.assert_trees_all_close(norm_history.recording_indices, expected_indices)
 
 
 class TestBatchedLearningLoop:
@@ -548,9 +551,9 @@ class TestBatchedLearningLoop:
         result = run_learning_loop_batched(learner, stream, num_steps, keys)
 
         assert isinstance(result, BatchedLearningResult)
-        assert result.metrics.shape == (num_seeds, num_steps, 3)
-        assert result.states.weights.shape == (num_seeds, feature_dim)
-        assert result.states.bias.shape == (num_seeds,)
+        chex.assert_shape(result.metrics, (num_seeds, num_steps, 3))
+        chex.assert_shape(result.states.weights, (num_seeds, feature_dim))
+        chex.assert_shape(result.states.bias, (num_seeds,))
         assert result.step_size_history is None
 
     def test_batched_matches_sequential(self, rng_key):
@@ -574,7 +577,7 @@ class TestBatchedLearningLoop:
         sequential_metrics = jnp.stack(sequential_metrics)
 
         # Should match
-        assert jnp.allclose(batched_result.metrics, sequential_metrics)
+        chex.assert_trees_all_close(batched_result.metrics, sequential_metrics)
 
     def test_batched_with_step_size_tracking(self, rng_key):
         """Batched loop should support step-size tracking."""
@@ -702,7 +705,7 @@ class TestBatchedNormalizedLearningLoop:
         sequential_metrics = jnp.stack(sequential_metrics)
 
         # Should match
-        assert jnp.allclose(batched_result.metrics, sequential_metrics)
+        chex.assert_trees_all_close(batched_result.metrics, sequential_metrics)
 
     def test_normalized_batched_with_both_tracking(self, rng_key):
         """Batched normalized loop should support both tracking options."""
@@ -727,19 +730,22 @@ class TestBatchedNormalizedLearningLoop:
 
         # Step-size history
         assert result.step_size_history is not None
-        assert result.step_size_history.step_sizes.shape == (
-            num_seeds, ss_recordings, feature_dim
+        chex.assert_shape(
+            result.step_size_history.step_sizes,
+            (num_seeds, ss_recordings, feature_dim),
         )
         # Autostep normalizers
         assert result.step_size_history.normalizers is not None
 
         # Normalizer history
         assert result.normalizer_history is not None
-        assert result.normalizer_history.means.shape == (
-            num_seeds, norm_recordings, feature_dim
+        chex.assert_shape(
+            result.normalizer_history.means,
+            (num_seeds, norm_recordings, feature_dim),
         )
-        assert result.normalizer_history.variances.shape == (
-            num_seeds, norm_recordings, feature_dim
+        chex.assert_shape(
+            result.normalizer_history.variances,
+            (num_seeds, norm_recordings, feature_dim),
         )
 
     def test_normalized_batched_step_size_only(self, rng_key):

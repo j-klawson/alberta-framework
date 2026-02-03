@@ -1,5 +1,6 @@
 """Tests for LMS, IDBD, and Autostep optimizers."""
 
+import chex
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -26,7 +27,7 @@ class TestLMS:
         result = optimizer.update(state, error, sample_observation)
 
         expected_delta = 0.1 * 2.0 * sample_observation
-        assert jnp.allclose(result.weight_delta, expected_delta)
+        chex.assert_trees_all_close(result.weight_delta, expected_delta)
         assert result.bias_delta == pytest.approx(0.1 * 2.0)
 
     def test_state_unchanged_after_update(self):
@@ -49,10 +50,10 @@ class TestIDBD:
         optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.001)
         state = optimizer.init(feature_dim=10)
 
-        assert state.log_step_sizes.shape == (10,)
-        assert state.traces.shape == (10,)
-        assert jnp.allclose(jnp.exp(state.log_step_sizes), 0.01)
-        assert jnp.allclose(state.traces, 0.0)
+        chex.assert_shape(state.log_step_sizes, (10,))
+        chex.assert_shape(state.traces, (10,))
+        chex.assert_trees_all_close(jnp.exp(state.log_step_sizes), jnp.full(10, 0.01))
+        chex.assert_trees_all_close(state.traces, jnp.zeros(10))
         assert state.meta_step_size == pytest.approx(0.001)
 
     def test_update_returns_correct_shapes(self, sample_observation):
@@ -63,9 +64,9 @@ class TestIDBD:
         error = jnp.array(1.0)
         result = optimizer.update(state, error, sample_observation)
 
-        assert result.weight_delta.shape == sample_observation.shape
-        assert result.new_state.log_step_sizes.shape == sample_observation.shape
-        assert result.new_state.traces.shape == sample_observation.shape
+        chex.assert_shape(result.weight_delta, sample_observation.shape)
+        chex.assert_shape(result.new_state.log_step_sizes, sample_observation.shape)
+        chex.assert_shape(result.new_state.traces, sample_observation.shape)
 
     def test_step_sizes_adapt_with_consistent_gradients(self):
         """Step-sizes should increase when gradients consistently agree."""
@@ -111,12 +112,12 @@ class TestAutostep:
         optimizer = Autostep(initial_step_size=0.01, meta_step_size=0.001)
         state = optimizer.init(feature_dim=10)
 
-        assert state.step_sizes.shape == (10,)
-        assert state.traces.shape == (10,)
-        assert state.normalizers.shape == (10,)
-        assert jnp.allclose(state.step_sizes, 0.01)
-        assert jnp.allclose(state.traces, 0.0)
-        assert jnp.allclose(state.normalizers, 1.0)
+        chex.assert_shape(state.step_sizes, (10,))
+        chex.assert_shape(state.traces, (10,))
+        chex.assert_shape(state.normalizers, (10,))
+        chex.assert_trees_all_close(state.step_sizes, jnp.full(10, 0.01))
+        chex.assert_trees_all_close(state.traces, jnp.zeros(10))
+        chex.assert_trees_all_close(state.normalizers, jnp.ones(10))
         assert state.meta_step_size == pytest.approx(0.001)
 
     def test_update_returns_correct_shapes(self, sample_observation):
@@ -127,10 +128,10 @@ class TestAutostep:
         error = jnp.array(1.0)
         result = optimizer.update(state, error, sample_observation)
 
-        assert result.weight_delta.shape == sample_observation.shape
-        assert result.new_state.step_sizes.shape == sample_observation.shape
-        assert result.new_state.traces.shape == sample_observation.shape
-        assert result.new_state.normalizers.shape == sample_observation.shape
+        chex.assert_shape(result.weight_delta, sample_observation.shape)
+        chex.assert_shape(result.new_state.step_sizes, sample_observation.shape)
+        chex.assert_shape(result.new_state.traces, sample_observation.shape)
+        chex.assert_shape(result.new_state.normalizers, sample_observation.shape)
 
     def test_normalizers_adapt_to_gradient_magnitude(self):
         """Normalizers should increase when gradients are large."""
@@ -142,12 +143,17 @@ class TestAutostep:
         large_observation = jnp.ones(feature_dim) * 10.0
         error = jnp.array(1.0)
 
-        initial_normalizers = state.normalizers.copy()
+        initial_normalizers = state.normalizers
 
         result = optimizer.update(state, error, large_observation)
 
         # Normalizers should have increased to handle large gradients
-        assert jnp.all(result.new_state.normalizers >= initial_normalizers)
+        chex.assert_trees_all_equal_comparator(
+            lambda x, y: jnp.all(x >= y),
+            lambda x, y: f"Expected {x} >= {y}",
+            result.new_state.normalizers,
+            initial_normalizers,
+        )
 
     def test_step_sizes_adapt_with_consistent_gradients(self):
         """Step-sizes should increase when gradients consistently agree."""
@@ -158,7 +164,7 @@ class TestAutostep:
         observation = jnp.ones(feature_dim)
         error = jnp.array(1.0)
 
-        initial_step_sizes = state.step_sizes.copy()
+        initial_step_sizes = state.step_sizes
 
         # Run multiple updates with consistent gradients
         for _ in range(10):
@@ -204,9 +210,9 @@ class TestOptimizerComparison:
         autostep_result = autostep.update(autostep_state, error, sample_observation)
 
         # All should produce finite updates
-        assert jnp.all(jnp.isfinite(lms_result.weight_delta))
-        assert jnp.all(jnp.isfinite(idbd_result.weight_delta))
-        assert jnp.all(jnp.isfinite(autostep_result.weight_delta))
+        chex.assert_tree_all_finite(lms_result.weight_delta)
+        chex.assert_tree_all_finite(idbd_result.weight_delta)
+        chex.assert_tree_all_finite(autostep_result.weight_delta)
 
         # All should produce non-zero updates for non-zero error
         assert jnp.any(lms_result.weight_delta != 0)

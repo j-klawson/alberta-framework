@@ -1,5 +1,6 @@
 """Tests for experience streams."""
 
+import chex
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -27,7 +28,7 @@ class TestRandomWalkStream:
         state = stream.init(rng_key)
 
         assert state.key is not None
-        assert state.true_weights.shape == (10,)
+        chex.assert_shape(state.true_weights, (10,))
 
     def test_step_produces_valid_timestep(self, rng_key):
         """Step should produce valid observation and target."""
@@ -36,10 +37,10 @@ class TestRandomWalkStream:
 
         timestep, new_state = stream.step(state, jnp.array(0))
 
-        assert timestep.observation.shape == (10,)
-        assert timestep.target.shape == (1,)
-        assert jnp.all(jnp.isfinite(timestep.observation))
-        assert jnp.all(jnp.isfinite(timestep.target))
+        chex.assert_shape(timestep.observation, (10,))
+        chex.assert_shape(timestep.target, (1,))
+        chex.assert_tree_all_finite(timestep.observation)
+        chex.assert_tree_all_finite(timestep.target)
 
     def test_feature_dim_property(self):
         """Feature dim property should return correct dimension."""
@@ -57,7 +58,8 @@ class TestRandomWalkStream:
             _, state = stream.step(state, jnp.array(i))
 
         # Weights should have changed
-        assert not jnp.allclose(initial_weights, state.true_weights)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_weights, state.true_weights)
 
     def test_deterministic_with_same_key(self, rng_key):
         """Same key should produce same sequence."""
@@ -69,8 +71,8 @@ class TestRandomWalkStream:
         state2 = stream.init(rng_key)
         timestep2, _ = stream.step(state2, jnp.array(0))
 
-        assert jnp.allclose(timestep1.observation, timestep2.observation)
-        assert jnp.allclose(timestep1.target, timestep2.target)
+        chex.assert_trees_all_close(timestep1.observation, timestep2.observation)
+        chex.assert_trees_all_close(timestep1.target, timestep2.target)
 
     def test_targets_are_non_constant(self, rng_key):
         """Targets should vary due to random features and noise."""
@@ -110,7 +112,8 @@ class TestAbruptChangeStream:
         weights_at_10 = state.true_weights
 
         # Weights should have changed at step 10
-        assert not jnp.allclose(weights_at_0, weights_at_10)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(weights_at_0, weights_at_10)
 
     def test_generates_valid_timesteps(self, rng_key):
         """Should generate valid TimeStep instances."""
@@ -120,7 +123,7 @@ class TestAbruptChangeStream:
         for i in range(50):
             timestep, state = stream.step(state, jnp.array(i))
             assert isinstance(timestep, TimeStep)
-            assert jnp.all(jnp.isfinite(timestep.observation))
+            chex.assert_tree_all_finite(timestep.observation)
 
 
 class TestSuttonExperiment1Stream:
@@ -150,7 +153,8 @@ class TestSuttonExperiment1Stream:
             _, state = stream.step(state, jnp.array(i))
 
         # At least one sign should have changed
-        assert not jnp.allclose(initial_signs, state.signs)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_signs, state.signs)
 
         # Exactly one sign should be different
         num_changes = jnp.sum(initial_signs != state.signs)
@@ -213,7 +217,7 @@ class TestCyclicStream:
             _, state = stream.step(state, jnp.array(i))
 
         # Config 0 weights should be unchanged (stored in configurations)
-        assert jnp.allclose(config0_weights, state.configurations[0])
+        chex.assert_trees_all_close(config0_weights, state.configurations[0])
 
     def test_generates_valid_timesteps(self, rng_key):
         """Should generate valid TimeStep instances."""
@@ -223,7 +227,7 @@ class TestCyclicStream:
         for i in range(50):
             timestep, state = stream.step(state, jnp.array(i))
             assert isinstance(timestep, TimeStep)
-            assert jnp.all(jnp.isfinite(timestep.observation))
+            chex.assert_tree_all_finite(timestep.observation)
 
 
 class TestPeriodicChangeStream:
@@ -235,8 +239,8 @@ class TestPeriodicChangeStream:
         state = stream.init(rng_key)
 
         assert state.key is not None
-        assert state.base_weights.shape == (10,)
-        assert state.phases.shape == (10,)
+        chex.assert_shape(state.base_weights, (10,))
+        chex.assert_shape(state.phases, (10,))
         assert state.step_count == 0
 
     def test_step_produces_valid_timestep(self, rng_key):
@@ -246,10 +250,10 @@ class TestPeriodicChangeStream:
 
         timestep, new_state = stream.step(state, jnp.array(0))
 
-        assert timestep.observation.shape == (10,)
-        assert timestep.target.shape == (1,)
-        assert jnp.all(jnp.isfinite(timestep.observation))
-        assert jnp.all(jnp.isfinite(timestep.target))
+        chex.assert_shape(timestep.observation, (10,))
+        chex.assert_shape(timestep.target, (1,))
+        chex.assert_tree_all_finite(timestep.observation)
+        chex.assert_tree_all_finite(timestep.target)
 
     def test_feature_dim_property(self):
         """Feature dim property should return correct dimension."""
@@ -277,7 +281,7 @@ class TestPeriodicChangeStream:
         weights_at_period = state.base_weights + oscillation_period
 
         # Should be back to same weights (sin(2π + φ) = sin(φ))
-        assert jnp.allclose(weights_at_0, weights_at_period, atol=1e-5)
+        chex.assert_trees_all_close(weights_at_0, weights_at_period, atol=1e-5)
 
     def test_weights_differ_at_half_period(self, rng_key):
         """Weights at half period should differ from initial (unless phase happens to align)."""
@@ -302,7 +306,8 @@ class TestPeriodicChangeStream:
         weights_0 = state.base_weights + oscillation_0
 
         # Weights should differ (they're inverted around base)
-        assert not jnp.allclose(weights_0, weights_half)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(weights_0, weights_half)
 
     def test_deterministic_with_same_key(self, rng_key):
         """Same key should produce same sequence."""
@@ -314,8 +319,8 @@ class TestPeriodicChangeStream:
         state2 = stream.init(rng_key)
         timestep2, _ = stream.step(state2, jnp.array(0))
 
-        assert jnp.allclose(timestep1.observation, timestep2.observation)
-        assert jnp.allclose(timestep1.target, timestep2.target)
+        chex.assert_trees_all_close(timestep1.observation, timestep2.observation)
+        chex.assert_trees_all_close(timestep1.target, timestep2.target)
 
 
 class TestScaledStreamWrapper:
@@ -337,7 +342,7 @@ class TestScaledStreamWrapper:
 
         # Wrapped observation should be inner * scales
         expected = inner_timestep.observation * scales
-        assert jnp.allclose(wrapped_timestep.observation, expected)
+        chex.assert_trees_all_close(wrapped_timestep.observation, expected)
 
     def test_preserves_target(self, rng_key):
         """Wrapper should not modify targets."""
@@ -352,7 +357,7 @@ class TestScaledStreamWrapper:
         wrapped_timestep, _ = wrapped.step(wrapped_state, jnp.array(0))
 
         # Target should be unchanged
-        assert jnp.allclose(wrapped_timestep.target, inner_timestep.target)
+        chex.assert_trees_all_close(wrapped_timestep.target, inner_timestep.target)
 
     def test_feature_dim_property(self):
         """Feature dim should match inner stream."""
@@ -378,7 +383,7 @@ class TestScaledStreamWrapper:
         )
         state1 = stream1.init(rng_key)
         ts1, _ = stream1.step(state1, jnp.array(0))
-        assert ts1.observation.shape == (5,)
+        chex.assert_shape(ts1.observation, (5,))
 
         # Test with CyclicStream
         stream2 = ScaledStreamWrapper(
@@ -386,7 +391,7 @@ class TestScaledStreamWrapper:
         )
         state2 = stream2.init(rng_key)
         ts2, _ = stream2.step(state2, jnp.array(0))
-        assert ts2.observation.shape == (5,)
+        chex.assert_shape(ts2.observation, (5,))
 
 
 class TestMakeScaleRange:
@@ -396,29 +401,29 @@ class TestMakeScaleRange:
         """Log-spaced scales should span min to max logarithmically."""
         scales = make_scale_range(5, min_scale=0.01, max_scale=100.0, log_spaced=True)
 
-        assert scales.shape == (5,)
-        assert jnp.isclose(scales[0], 0.01, rtol=1e-5)
-        assert jnp.isclose(scales[-1], 100.0, rtol=1e-5)
+        chex.assert_shape(scales, (5,))
+        chex.assert_trees_all_close(scales[0], jnp.array(0.01), rtol=1e-5)
+        chex.assert_trees_all_close(scales[-1], jnp.array(100.0), rtol=1e-5)
         # Middle value should be geometric mean ≈ 1.0
-        assert jnp.isclose(scales[2], 1.0, rtol=0.1)
+        chex.assert_trees_all_close(scales[2], jnp.array(1.0), rtol=0.1)
 
     def test_linear_spaced_range(self):
         """Linear-spaced scales should span min to max linearly."""
         scales = make_scale_range(5, min_scale=0.0, max_scale=100.0, log_spaced=False)
 
-        assert scales.shape == (5,)
-        assert jnp.isclose(scales[0], 0.0, atol=1e-5)
-        assert jnp.isclose(scales[-1], 100.0, rtol=1e-5)
+        chex.assert_shape(scales, (5,))
+        chex.assert_trees_all_close(scales[0], jnp.array(0.0), atol=1e-5)
+        chex.assert_trees_all_close(scales[-1], jnp.array(100.0), rtol=1e-5)
         # Middle value should be arithmetic mean = 50.0
-        assert jnp.isclose(scales[2], 50.0, rtol=1e-5)
+        chex.assert_trees_all_close(scales[2], jnp.array(50.0), rtol=1e-5)
 
     def test_default_range(self):
         """Default range should be 0.001 to 1000."""
         scales = make_scale_range(7)
 
-        assert scales.shape == (7,)
-        assert jnp.isclose(scales[0], 0.001, rtol=1e-5)
-        assert jnp.isclose(scales[-1], 1000.0, rtol=1e-5)
+        chex.assert_shape(scales, (7,))
+        chex.assert_trees_all_close(scales[0], jnp.array(0.001), rtol=1e-5)
+        chex.assert_trees_all_close(scales[-1], jnp.array(1000.0), rtol=1e-5)
 
 
 class TestDynamicScaleShiftStream:
@@ -430,8 +435,8 @@ class TestDynamicScaleShiftStream:
         state = stream.init(rng_key)
 
         assert state.key is not None
-        assert state.true_weights.shape == (10,)
-        assert state.current_scales.shape == (10,)
+        chex.assert_shape(state.true_weights, (10,))
+        chex.assert_shape(state.current_scales, (10,))
         assert state.step_count == 0
 
     def test_step_produces_valid_timestep(self, rng_key):
@@ -441,10 +446,10 @@ class TestDynamicScaleShiftStream:
 
         timestep, new_state = stream.step(state, jnp.array(0))
 
-        assert timestep.observation.shape == (10,)
-        assert timestep.target.shape == (1,)
-        assert jnp.all(jnp.isfinite(timestep.observation))
-        assert jnp.all(jnp.isfinite(timestep.target))
+        chex.assert_shape(timestep.observation, (10,))
+        chex.assert_shape(timestep.target, (1,))
+        chex.assert_tree_all_finite(timestep.observation)
+        chex.assert_tree_all_finite(timestep.target)
 
     def test_feature_dim_property(self):
         """Feature dim property should return correct dimension."""
@@ -474,7 +479,8 @@ class TestDynamicScaleShiftStream:
         scales_at_10 = state.current_scales
 
         # Scales should have changed at step 10
-        assert not jnp.allclose(initial_scales, scales_at_10)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_scales, scales_at_10)
 
     def test_weights_change_at_interval(self, rng_key):
         """Weights should change at specified interval."""
@@ -492,7 +498,8 @@ class TestDynamicScaleShiftStream:
             _, state = stream.step(state, jnp.array(i))
 
         # Weights should have changed at step 10
-        assert not jnp.allclose(initial_weights, state.true_weights)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_weights, state.true_weights)
 
     def test_scales_within_bounds(self, rng_key):
         """Scales should be within min_scale and max_scale."""
@@ -523,8 +530,8 @@ class TestDynamicScaleShiftStream:
         state2 = stream.init(rng_key)
         timestep2, _ = stream.step(state2, jnp.array(0))
 
-        assert jnp.allclose(timestep1.observation, timestep2.observation)
-        assert jnp.allclose(timestep1.target, timestep2.target)
+        chex.assert_trees_all_close(timestep1.observation, timestep2.observation)
+        chex.assert_trees_all_close(timestep1.target, timestep2.target)
 
 
 class TestScaleDriftStream:
@@ -536,11 +543,11 @@ class TestScaleDriftStream:
         state = stream.init(rng_key)
 
         assert state.key is not None
-        assert state.true_weights.shape == (10,)
-        assert state.log_scales.shape == (10,)
+        chex.assert_shape(state.true_weights, (10,))
+        chex.assert_shape(state.log_scales, (10,))
         assert state.step_count == 0
         # Initial log_scales should be 0 (scale = 1)
-        assert jnp.allclose(state.log_scales, 0.0)
+        chex.assert_trees_all_close(state.log_scales, jnp.zeros(10))
 
     def test_step_produces_valid_timestep(self, rng_key):
         """Step should produce valid observation and target."""
@@ -549,10 +556,10 @@ class TestScaleDriftStream:
 
         timestep, new_state = stream.step(state, jnp.array(0))
 
-        assert timestep.observation.shape == (10,)
-        assert timestep.target.shape == (1,)
-        assert jnp.all(jnp.isfinite(timestep.observation))
-        assert jnp.all(jnp.isfinite(timestep.target))
+        chex.assert_shape(timestep.observation, (10,))
+        chex.assert_shape(timestep.target, (1,))
+        chex.assert_tree_all_finite(timestep.observation)
+        chex.assert_tree_all_finite(timestep.target)
 
     def test_feature_dim_property(self):
         """Feature dim property should return correct dimension."""
@@ -570,7 +577,8 @@ class TestScaleDriftStream:
             _, state = stream.step(state, jnp.array(i))
 
         # Log-scales should have changed
-        assert not jnp.allclose(initial_log_scales, state.log_scales)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_log_scales, state.log_scales)
 
     def test_weights_drift_over_time(self, rng_key):
         """Weights should change from step to step."""
@@ -583,7 +591,8 @@ class TestScaleDriftStream:
             _, state = stream.step(state, jnp.array(i))
 
         # Weights should have changed
-        assert not jnp.allclose(initial_weights, state.true_weights)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(initial_weights, state.true_weights)
 
     def test_log_scales_bounded(self, rng_key):
         """Log-scales should stay within bounds."""
@@ -614,8 +623,8 @@ class TestScaleDriftStream:
         state2 = stream.init(rng_key)
         timestep2, _ = stream.step(state2, jnp.array(0))
 
-        assert jnp.allclose(timestep1.observation, timestep2.observation)
-        assert jnp.allclose(timestep1.target, timestep2.target)
+        chex.assert_trees_all_close(timestep1.observation, timestep2.observation)
+        chex.assert_trees_all_close(timestep1.target, timestep2.target)
 
     def test_generates_valid_timesteps(self, rng_key):
         """Should generate valid TimeStep instances over many steps."""
@@ -625,5 +634,5 @@ class TestScaleDriftStream:
         for i in range(100):
             timestep, state = stream.step(state, jnp.array(i))
             assert isinstance(timestep, TimeStep)
-            assert jnp.all(jnp.isfinite(timestep.observation))
-            assert jnp.all(jnp.isfinite(timestep.target))
+            chex.assert_tree_all_finite(timestep.observation)
+            chex.assert_tree_all_finite(timestep.target)

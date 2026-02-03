@@ -10,15 +10,17 @@ References:
 """
 
 from abc import ABC, abstractmethod
-from typing import NamedTuple
 
+import chex
 import jax.numpy as jnp
 from jax import Array
+from jaxtyping import Float
 
 from alberta_framework.core.types import AutostepState, IDBDState, LMSState
 
 
-class OptimizerUpdate(NamedTuple):
+@chex.dataclass(frozen=True)
+class OptimizerUpdate:
     """Result of an optimizer update step.
 
     Attributes:
@@ -28,8 +30,8 @@ class OptimizerUpdate(NamedTuple):
         metrics: Dictionary of metrics for logging (values are JAX arrays for scan compatibility)
     """
 
-    weight_delta: Array
-    bias_delta: Array
+    weight_delta: Float[Array, " feature_dim"]
+    bias_delta: Float[Array, ""]
     new_state: LMSState | IDBDState | AutostepState
     metrics: dict[str, Array]
 

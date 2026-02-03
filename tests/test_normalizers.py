@@ -1,5 +1,6 @@
 """Tests for online feature normalization."""
 
+import chex
 import jax.numpy as jnp
 import pytest
 
@@ -14,10 +15,10 @@ class TestOnlineNormalizer:
         normalizer = OnlineNormalizer()
         state = normalizer.init(feature_dim)
 
-        assert state.mean.shape == (feature_dim,)
-        assert state.var.shape == (feature_dim,)
-        assert jnp.allclose(state.mean, 0.0)
-        assert jnp.allclose(state.var, 1.0)
+        chex.assert_shape(state.mean, (feature_dim,))
+        chex.assert_shape(state.var, (feature_dim,))
+        chex.assert_trees_all_close(state.mean, jnp.zeros(feature_dim))
+        chex.assert_trees_all_close(state.var, jnp.ones(feature_dim))
         assert state.sample_count == 0.0
 
     def test_normalize_updates_statistics(self, sample_observation):
@@ -31,7 +32,8 @@ class TestOnlineNormalizer:
         assert new_state.sample_count == 1.0
 
         # Mean should have moved toward the observation
-        assert not jnp.allclose(new_state.mean, state.mean)
+        with pytest.raises(AssertionError):
+            chex.assert_trees_all_close(new_state.mean, state.mean)
 
     def test_normalize_returns_finite_values(self, sample_observation):
         """Normalized output should always be finite."""
@@ -40,7 +42,7 @@ class TestOnlineNormalizer:
 
         normalized, _ = normalizer.normalize(state, sample_observation)
 
-        assert jnp.all(jnp.isfinite(normalized))
+        chex.assert_tree_all_finite(normalized)
 
     def test_normalize_only_does_not_update_state(self, sample_observation):
         """normalize_only should not modify the state."""
@@ -77,7 +79,7 @@ class TestOnlineNormalizer:
 
         # Mean should be close to the observation
         # (not exact due to decay and numerical issues)
-        assert jnp.allclose(state.mean, sample_observation, atol=0.5)
+        chex.assert_trees_all_close(state.mean, sample_observation, atol=0.5)
 
     def test_normalized_output_has_zero_mean_unit_var_asymptotically(self):
         """After many samples from standard normal, output should be ~N(0,1)."""
@@ -104,8 +106,8 @@ class TestOnlineNormalizer:
         var_of_normalized = jnp.var(all_normalized, axis=0)
 
         # Should be close to N(0,1)
-        assert jnp.allclose(mean_of_normalized, 0.0, atol=0.3)
-        assert jnp.allclose(var_of_normalized, 1.0, atol=0.5)
+        chex.assert_trees_all_close(mean_of_normalized, jnp.zeros(feature_dim), atol=0.3)
+        chex.assert_trees_all_close(var_of_normalized, jnp.ones(feature_dim), atol=0.5)
 
 
 class TestCreateNormalizerState:
@@ -116,7 +118,7 @@ class TestCreateNormalizerState:
         state = create_normalizer_state(feature_dim=10, decay=0.95)
 
         assert isinstance(state, NormalizerState)
-        assert state.mean.shape == (10,)
+        chex.assert_shape(state.mean, (10,))
         assert state.decay == pytest.approx(0.95)
 
     def test_default_decay(self):
