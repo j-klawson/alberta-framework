@@ -313,9 +313,7 @@ def wilcoxon_comparison(
         stat_val = float(result[0])
         p_val = float(result[1])
     except ImportError:
-        raise ImportError(
-            "scipy is required for Wilcoxon test. Install with: pip install scipy"
-        )
+        raise ImportError("scipy is required for Wilcoxon test. Install with: pip install scipy")
 
     effect = cohens_d(a, b)
 
@@ -443,18 +441,28 @@ def pairwise_comparisons(
 
             if test == "ttest":
                 result = ttest_comparison(
-                    values_a, values_b, paired=True, alpha=alpha,
-                    method_a=name_a, method_b=name_b,
+                    values_a,
+                    values_b,
+                    paired=True,
+                    alpha=alpha,
+                    method_a=name_a,
+                    method_b=name_b,
                 )
             elif test == "mann_whitney":
                 result = mann_whitney_comparison(
-                    values_a, values_b, alpha=alpha,
-                    method_a=name_a, method_b=name_b,
+                    values_a,
+                    values_b,
+                    alpha=alpha,
+                    method_a=name_a,
+                    method_b=name_b,
                 )
             else:  # wilcoxon
                 result = wilcoxon_comparison(
-                    values_a, values_b, alpha=alpha,
-                    method_a=name_a, method_b=name_b,
+                    values_a,
+                    values_b,
+                    alpha=alpha,
+                    method_a=name_a,
+                    method_b=name_b,
                 )
 
             comparisons[(name_a, name_b)] = result

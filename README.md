@@ -66,9 +66,14 @@ state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=jr.key(
 
 ### Optimizers
 
+**Supervised Learning:**
 - **LMS**: Fixed step-size baseline
 - **IDBD**: Per-weight adaptive step-sizes via gradient correlation (Sutton, 1992)
 - **Autostep**: Tuning-free adaptation with gradient normalization (Mahmood et al., 2012)
+
+**TD Learning:**
+- **TDIDBD**: TD learning with per-weight adaptive step-sizes and eligibility traces (Kearney et al., 2019)
+- **AutoTDIDBD**: TD learning with AutoStep-style normalization for improved stability
 
 ### Streams
 
@@ -78,6 +83,17 @@ Non-stationary experience generators implementing the `ScanStream` protocol:
 - `AbruptChangeStream`: Sudden target switches
 - `PeriodicChangeStream`: Sinusoidal oscillation
 - `DynamicScaleShiftStream`: Time-varying feature scales
+
+### TD Learning
+
+For temporal-difference learning with value function approximation:
+
+```python
+from alberta_framework import TDLinearLearner, TDIDBD, run_td_learning_loop
+
+learner = TDLinearLearner(optimizer=TDIDBD(trace_decay=0.9))
+state, metrics = run_td_learning_loop(learner, td_stream, num_steps=10000, key=jr.key(42))
+```
 
 ### Gymnasium Integration
 
@@ -154,6 +170,13 @@ If you use this framework in your research, please cite:
   author = {Mahmood, A. Rupam and Sutton, Richard S. and Degris, Thomas and Pilarski, Patrick M.},
   booktitle = {IEEE International Conference on Acoustics, Speech and Signal Processing},
   year = {2012}
+}
+
+@inproceedings{kearney2019tidbd,
+  title = {Learning Feature Relevance Through Step Size Adaptation in Temporal-Difference Learning},
+  author = {Kearney, Alex and Veeriah, Vivek and Travnik, Jaden and Sutton, Richard S. and Pilarski, Patrick M.},
+  booktitle = {International Conference on Machine Learning},
+  year = {2019}
 }
 ```
 

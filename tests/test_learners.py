@@ -6,11 +6,11 @@ import jax.random as jr
 import pytest
 
 from alberta_framework import (
+    IDBD,
+    LMS,
     Autostep,
     BatchedLearningResult,
     BatchedNormalizedResult,
-    IDBD,
-    LMS,
     LinearLearner,
     NormalizedLinearLearner,
     NormalizerHistory,
@@ -76,7 +76,9 @@ class TestLinearLearner:
 
         assert final_error < initial_error
 
-    def test_update_returns_correct_metrics_array(self, feature_dim, sample_observation, sample_target):
+    def test_update_returns_correct_metrics_array(
+        self, feature_dim, sample_observation, sample_target
+    ):
         """Update should return metrics array with squared error."""
         learner = LinearLearner()
         state = learner.init(feature_dim)
@@ -133,9 +135,7 @@ class TestRunLearningLoop:
         state1, _ = run_learning_loop(learner, stream, num_steps=50, key=key1)
 
         # Continue from state1 with new key for stream
-        state2, _ = run_learning_loop(
-            learner, stream, num_steps=50, key=key2, learner_state=state1
-        )
+        state2, _ = run_learning_loop(learner, stream, num_steps=50, key=key2, learner_state=state1)
 
         # Weights should have changed
         with pytest.raises(AssertionError):
@@ -232,8 +232,10 @@ class TestStepSizeTracking:
         )
 
         # All step-sizes should be equal to the fixed step_size
-        chex.assert_trees_all_close(history.step_sizes, jnp.full_like(history.step_sizes, step_size))
-        chex.assert_trees_all_close(history.bias_step_sizes, jnp.full_like(history.bias_step_sizes, step_size))
+        expected_ss = jnp.full_like(history.step_sizes, step_size)
+        expected_bias_ss = jnp.full_like(history.bias_step_sizes, step_size)
+        chex.assert_trees_all_close(history.step_sizes, expected_ss)
+        chex.assert_trees_all_close(history.bias_step_sizes, expected_bias_ss)
 
     def test_idbd_step_sizes_evolve(self, rng_key):
         """IDBD step-sizes should change over training."""
@@ -398,9 +400,7 @@ class TestNormalizedLearningLoopTracking:
         stream = RandomWalkStream(feature_dim=5)
         learner = NormalizedLinearLearner(optimizer=IDBD())
 
-        result = run_normalized_learning_loop(
-            learner, stream, num_steps=100, key=rng_key
-        )
+        result = run_normalized_learning_loop(learner, stream, num_steps=100, key=rng_key)
 
         assert len(result) == 2
         state, metrics = result
@@ -450,8 +450,12 @@ class TestNormalizedLearningLoopTracking:
         norm_config = NormalizerTrackingConfig(interval=20)
 
         result = run_normalized_learning_loop(
-            learner, stream, num_steps=100, key=rng_key,
-            step_size_tracking=ss_config, normalizer_tracking=norm_config
+            learner,
+            stream,
+            num_steps=100,
+            key=rng_key,
+            step_size_tracking=ss_config,
+            normalizer_tracking=norm_config,
         )
 
         assert len(result) == 4
@@ -598,18 +602,18 @@ class TestBatchedLearningLoop:
 
         assert result.step_size_history is not None
         assert result.step_size_history.step_sizes.shape == (
-            num_seeds, expected_recordings, feature_dim
+            num_seeds,
+            expected_recordings,
+            feature_dim,
         )
-        assert result.step_size_history.bias_step_sizes.shape == (
-            num_seeds, expected_recordings
-        )
-        assert result.step_size_history.recording_indices.shape == (
-            num_seeds, expected_recordings
-        )
+        assert result.step_size_history.bias_step_sizes.shape == (num_seeds, expected_recordings)
+        assert result.step_size_history.recording_indices.shape == (num_seeds, expected_recordings)
         # Autostep should have normalizers tracked
         assert result.step_size_history.normalizers is not None
         assert result.step_size_history.normalizers.shape == (
-            num_seeds, expected_recordings, feature_dim
+            num_seeds,
+            expected_recordings,
+            feature_dim,
         )
 
     def test_batched_without_tracking_has_none_history(self, rng_key):
@@ -693,9 +697,7 @@ class TestBatchedNormalizedLearningLoop:
         keys = jr.split(rng_key, num_seeds)
 
         # Run batched
-        batched_result = run_normalized_learning_loop_batched(
-            learner, stream, num_steps, keys
-        )
+        batched_result = run_normalized_learning_loop_batched(learner, stream, num_steps, keys)
 
         # Run sequential
         sequential_metrics = []
@@ -724,8 +726,12 @@ class TestBatchedNormalizedLearningLoop:
         norm_config = NormalizerTrackingConfig(interval=norm_interval)
 
         result = run_normalized_learning_loop_batched(
-            learner, stream, num_steps, keys,
-            step_size_tracking=ss_config, normalizer_tracking=norm_config
+            learner,
+            stream,
+            num_steps,
+            keys,
+            step_size_tracking=ss_config,
+            normalizer_tracking=norm_config,
         )
 
         # Step-size history

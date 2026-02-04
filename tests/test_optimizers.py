@@ -2,10 +2,9 @@
 
 import chex
 import jax.numpy as jnp
-import jax.random as jr
 import pytest
 
-from alberta_framework import Autostep, IDBD, LMS
+from alberta_framework import IDBD, LMS, Autostep
 
 
 class TestLMS:

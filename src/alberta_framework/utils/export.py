@@ -51,14 +51,16 @@ def _export_summary_csv(
 
         for name, agg in results.items():
             summary = agg.summary[metric]
-            writer.writerow([
-                name,
-                f"{summary.mean:.6f}",
-                f"{summary.std:.6f}",
-                f"{summary.min:.6f}",
-                f"{summary.max:.6f}",
-                summary.n_seeds,
-            ])
+            writer.writerow(
+                [
+                    name,
+                    f"{summary.mean:.6f}",
+                    f"{summary.std:.6f}",
+                    f"{summary.min:.6f}",
+                    f"{summary.max:.6f}",
+                    summary.n_seeds,
+                ]
+            )
 
 
 def _export_timeseries_csv(
@@ -497,13 +499,15 @@ def results_to_dataframe(
     rows = []
     for name, agg in results.items():
         summary = agg.summary[metric]
-        rows.append({
-            "method": name,
-            "mean": summary.mean,
-            "std": summary.std,
-            "min": summary.min,
-            "max": summary.max,
-            "n_seeds": summary.n_seeds,
-        })
+        rows.append(
+            {
+                "method": name,
+                "mean": summary.mean,
+                "std": summary.std,
+                "min": summary.min,
+                "max": summary.max,
+                "n_seeds": summary.n_seeds,
+            }
+        )
 
     return pd.DataFrame(rows)

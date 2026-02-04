@@ -14,10 +14,10 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, LMSState, IDBDState, AutostepState, StepSizeTrackingConfig, StepSizeHistory, NormalizerTrackingConfig, NormalizerHistory, BatchedLearningResult, BatchedNormalizedResult
-│   ├── optimizers.py   # LMS, IDBD, Autostep optimizers
+│   ├── types.py        # TimeStep, LearnerState, optimizer states, TDTimeStep, TDLearnerState, TDIDBDState, AutoTDIDBDState
+│   ├── optimizers.py   # LMS, IDBD, Autostep, TDIDBD, AutoTDIDBD optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, NormalizedLinearLearner, run_learning_loop, run_learning_loop_batched, run_normalized_learning_loop, run_normalized_learning_loop_batched, metrics_to_dicts
+│   └── learners.py     # LinearLearner, TDLinearLearner, run_learning_loop, run_td_learning_loop
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -469,6 +469,15 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.4.0 (2026-02-04)
+- **FEATURE**: Implemented TD-IDBD optimizer for temporal-difference learning with per-weight adaptive step-sizes and eligibility traces (Kearney et al., 2019)
+- **FEATURE**: Implemented AutoTDIDBD optimizer with AutoStep-style normalization for improved stability
+- **FEATURE**: Added `TDLinearLearner` class for linear value function approximation in TD learning
+- **FEATURE**: Added `run_td_learning_loop()` for JIT-compiled TD learning via `jax.lax.scan`
+- **FEATURE**: Added TD state types: `TDIDBDState`, `AutoTDIDBDState`, `TDLearnerState`, `TDTimeStep`
+- **FEATURE**: Added `TDStream` protocol for TD experience streams
+- **DOCS**: Updated README with TD learning documentation and Kearney et al. 2019 reference
 
 ### v0.3.2 (2026-02-03)
 - **FIX**: Relaxed test tolerance in batched vs sequential comparison tests (`rtol=1e-5`) to account for floating-point differences between vmap and sequential execution paths

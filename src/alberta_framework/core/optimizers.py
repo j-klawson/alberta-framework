@@ -16,7 +16,13 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import Float
 
-from alberta_framework.core.types import AutostepState, IDBDState, LMSState
+from alberta_framework.core.types import (
+    AutostepState,
+    AutoTDIDBDState,
+    IDBDState,
+    LMSState,
+    TDIDBDState,
+)
 
 
 @chex.dataclass(frozen=True)
@@ -422,5 +428,496 @@ class Autostep(Optimizer[AutostepState]):
                 "min_step_size": jnp.min(state.step_sizes),
                 "max_step_size": jnp.max(state.step_sizes),
                 "mean_normalizer": jnp.mean(state.normalizers),
+            },
+        )
+
+
+# =============================================================================
+# TD Optimizers (for Step 3+ of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class TDOptimizerUpdate:
+    """Result of a TD optimizer update step.
+
+    Attributes:
+        weight_delta: Change to apply to weights
+        bias_delta: Change to apply to bias
+        new_state: Updated optimizer state
+        metrics: Dictionary of metrics for logging
+    """
+
+    weight_delta: Float[Array, " feature_dim"]
+    bias_delta: Float[Array, ""]
+    new_state: TDIDBDState | AutoTDIDBDState
+    metrics: dict[str, Array]
+
+
+class TDOptimizer[StateT: (TDIDBDState, AutoTDIDBDState)](ABC):
+    """Base class for TD optimizers.
+
+    TD optimizers handle temporal-difference learning with eligibility traces.
+    They take TD error and both current and next observations as input.
+    """
+
+    @abstractmethod
+    def init(self, feature_dim: int) -> StateT:
+        """Initialize optimizer state.
+
+        Args:
+            feature_dim: Dimension of weight vector
+
+        Returns:
+            Initial optimizer state
+        """
+        ...
+
+    @abstractmethod
+    def update(
+        self,
+        state: StateT,
+        td_error: Array,
+        observation: Array,
+        next_observation: Array,
+        gamma: Array,
+    ) -> TDOptimizerUpdate:
+        """Compute weight updates given TD error.
+
+        Args:
+            state: Current optimizer state
+            td_error: TD error δ = R + γV(s') - V(s)
+            observation: Current observation φ(s)
+            next_observation: Next observation φ(s')
+            gamma: Discount factor γ (0 at terminal)
+
+        Returns:
+            TDOptimizerUpdate with deltas and new state
+        """
+        ...
+
+
+class TDIDBD(TDOptimizer[TDIDBDState]):
+    """TD-IDBD optimizer for temporal-difference learning.
+
+    Extends IDBD to TD learning with eligibility traces. Maintains per-weight
+    adaptive step-sizes that are meta-learned based on gradient correlation
+    in the TD setting.
+
+    Two variants are supported:
+    - Semi-gradient (default): Uses only φ(s) in meta-update, more stable
+    - Ordinary gradient: Uses both φ(s) and φ(s'), more accurate but sensitive
+
+    Reference: Kearney et al. 2019, "Learning Feature Relevance Through Step Size
+    Adaptation in Temporal-Difference Learning"
+
+    The semi-gradient TD-IDBD algorithm (Algorithm 3 in paper):
+        1. Compute TD error: `δ = R + γ*w^T*φ(s') - w^T*φ(s)`
+        2. Update meta-weights: `β_i += θ*δ*φ_i(s)*h_i`
+        3. Compute step-sizes: `α_i = exp(β_i)`
+        4. Update eligibility traces: `z_i = γ*λ*z_i + φ_i(s)`
+        5. Update weights: `w_i += α_i*δ*z_i`
+        6. Update h traces: `h_i = h_i*[1 - α_i*φ_i(s)*z_i]^+ + α_i*δ*z_i`
+
+    Attributes:
+        initial_step_size: Initial per-weight step-size
+        meta_step_size: Meta learning rate theta
+        trace_decay: Eligibility trace decay lambda
+        use_semi_gradient: If True, use semi-gradient variant (default)
+    """
+
+    def __init__(
+        self,
+        initial_step_size: float = 0.01,
+        meta_step_size: float = 0.01,
+        trace_decay: float = 0.0,
+        use_semi_gradient: bool = True,
+    ):
+        """Initialize TD-IDBD optimizer.
+
+        Args:
+            initial_step_size: Initial value for per-weight step-sizes
+            meta_step_size: Meta learning rate theta for adapting step-sizes
+            trace_decay: Eligibility trace decay lambda (0 = TD(0))
+            use_semi_gradient: If True, use semi-gradient variant (recommended)
+        """
+        self._initial_step_size = initial_step_size
+        self._meta_step_size = meta_step_size
+        self._trace_decay = trace_decay
+        self._use_semi_gradient = use_semi_gradient
+
+    def init(self, feature_dim: int) -> TDIDBDState:
+        """Initialize TD-IDBD state.
+
+        Args:
+            feature_dim: Dimension of weight vector
+
+        Returns:
+            TD-IDBD state with per-weight step-sizes, traces, and h traces
+        """
+        return TDIDBDState(
+            log_step_sizes=jnp.full(
+                feature_dim, jnp.log(self._initial_step_size), dtype=jnp.float32
+            ),
+            eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+            h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+            meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
+            trace_decay=jnp.array(self._trace_decay, dtype=jnp.float32),
+            bias_log_step_size=jnp.array(jnp.log(self._initial_step_size), dtype=jnp.float32),
+            bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
+            bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
+        )
+
+    def update(
+        self,
+        state: TDIDBDState,
+        td_error: Array,
+        observation: Array,
+        next_observation: Array,
+        gamma: Array,
+    ) -> TDOptimizerUpdate:
+        """Compute TD-IDBD weight update with adaptive step-sizes.
+
+        Implements Algorithm 3 (semi-gradient) or Algorithm 4 (ordinary gradient)
+        from Kearney et al. 2019.
+
+        Args:
+            state: Current TD-IDBD state
+            td_error: TD error δ = R + γV(s') - V(s)
+            observation: Current observation φ(s)
+            next_observation: Next observation φ(s')
+            gamma: Discount factor γ (0 at terminal)
+
+        Returns:
+            TDOptimizerUpdate with weight deltas and updated state
+        """
+        delta = jnp.squeeze(td_error)
+        theta = state.meta_step_size
+        lam = state.trace_decay
+        gamma_scalar = jnp.squeeze(gamma)
+
+        if self._use_semi_gradient:
+            # Semi-gradient TD-IDBD (Algorithm 3)
+            # β_i += θ*δ*φ_i(s)*h_i
+            gradient_correlation = delta * observation * state.h_traces
+            new_log_step_sizes = state.log_step_sizes + theta * gradient_correlation
+        else:
+            # Ordinary gradient TD-IDBD (Algorithm 4)
+            # β_i -= θ*δ*[γ*φ_i(s') - φ_i(s)]*h_i
+            # Note: negative sign because gradient direction is reversed
+            feature_diff = gamma_scalar * next_observation - observation
+            gradient_correlation = delta * feature_diff * state.h_traces
+            new_log_step_sizes = state.log_step_sizes - theta * gradient_correlation
+
+        # Clip log step-sizes to prevent numerical issues
+        new_log_step_sizes = jnp.clip(new_log_step_sizes, -10.0, 2.0)
+
+        # Get updated step-sizes for weight update
+        new_alphas = jnp.exp(new_log_step_sizes)
+
+        # Update eligibility traces: z_i = γ*λ*z_i + φ_i(s)
+        new_eligibility_traces = gamma_scalar * lam * state.eligibility_traces + observation
+
+        # Compute weight delta: α_i*δ*z_i
+        weight_delta = new_alphas * delta * new_eligibility_traces
+
+        if self._use_semi_gradient:
+            # Semi-gradient h update (Algorithm 3, line 9)
+            # h_i = h_i*[1 - α_i*φ_i(s)*z_i]^+ + α_i*δ*z_i
+            h_decay = jnp.maximum(0.0, 1.0 - new_alphas * observation * new_eligibility_traces)
+            new_h_traces = state.h_traces * h_decay + new_alphas * delta * new_eligibility_traces
+        else:
+            # Ordinary gradient h update (Algorithm 4, line 9)
+            # h_i = h_i*[1 + α_i*z_i*(γ*φ_i(s') - φ_i(s))]^+ + α_i*δ*z_i
+            feature_diff = gamma_scalar * next_observation - observation
+            h_decay = jnp.maximum(0.0, 1.0 + new_alphas * new_eligibility_traces * feature_diff)
+            new_h_traces = state.h_traces * h_decay + new_alphas * delta * new_eligibility_traces
+
+        # Bias updates (similar logic but scalar)
+        if self._use_semi_gradient:
+            # Semi-gradient bias meta-update
+            bias_gradient_correlation = delta * state.bias_h_trace
+            new_bias_log_step_size = state.bias_log_step_size + theta * bias_gradient_correlation
+        else:
+            # Ordinary gradient bias meta-update
+            # For bias, φ(s) = 1, so feature_diff = γ - 1
+            bias_feature_diff = gamma_scalar - 1.0
+            bias_gradient_correlation = delta * bias_feature_diff * state.bias_h_trace
+            new_bias_log_step_size = state.bias_log_step_size - theta * bias_gradient_correlation
+
+        new_bias_log_step_size = jnp.clip(new_bias_log_step_size, -10.0, 2.0)
+        new_bias_alpha = jnp.exp(new_bias_log_step_size)
+
+        # Update bias eligibility trace
+        new_bias_eligibility_trace = gamma_scalar * lam * state.bias_eligibility_trace + 1.0
+
+        # Bias weight delta
+        bias_delta = new_bias_alpha * delta * new_bias_eligibility_trace
+
+        if self._use_semi_gradient:
+            # Semi-gradient bias h update
+            bias_h_decay = jnp.maximum(0.0, 1.0 - new_bias_alpha * new_bias_eligibility_trace)
+            new_bias_h_trace = (
+                state.bias_h_trace * bias_h_decay
+                + new_bias_alpha * delta * new_bias_eligibility_trace
+            )
+        else:
+            # Ordinary gradient bias h update
+            bias_feature_diff = gamma_scalar - 1.0
+            bias_h_decay = jnp.maximum(
+                0.0, 1.0 + new_bias_alpha * new_bias_eligibility_trace * bias_feature_diff
+            )
+            new_bias_h_trace = (
+                state.bias_h_trace * bias_h_decay
+                + new_bias_alpha * delta * new_bias_eligibility_trace
+            )
+
+        new_state = TDIDBDState(
+            log_step_sizes=new_log_step_sizes,
+            eligibility_traces=new_eligibility_traces,
+            h_traces=new_h_traces,
+            meta_step_size=theta,
+            trace_decay=lam,
+            bias_log_step_size=new_bias_log_step_size,
+            bias_eligibility_trace=new_bias_eligibility_trace,
+            bias_h_trace=new_bias_h_trace,
+        )
+
+        return TDOptimizerUpdate(
+            weight_delta=weight_delta,
+            bias_delta=bias_delta,
+            new_state=new_state,
+            metrics={
+                "mean_step_size": jnp.mean(new_alphas),
+                "min_step_size": jnp.min(new_alphas),
+                "max_step_size": jnp.max(new_alphas),
+                "mean_eligibility_trace": jnp.mean(jnp.abs(new_eligibility_traces)),
+            },
+        )
+
+
+class AutoTDIDBD(TDOptimizer[AutoTDIDBDState]):
+    """AutoStep-style normalized TD-IDBD optimizer.
+
+    Adds AutoStep-style normalization to TDIDBD for improved stability and
+    reduced sensitivity to the meta step-size theta. Includes:
+    1. Normalization of the meta-weight update by a running trace of recent updates
+    2. Effective step-size normalization to prevent overshooting
+
+    Reference: Kearney et al. 2019, Algorithm 6 "AutoStep Style Normalized TIDBD(λ)"
+
+    The AutoTDIDBD algorithm:
+        1. Compute TD error: `δ = R + γ*w^T*φ(s') - w^T*φ(s)`
+        2. Update normalizers: `η_i = max(|δ*[γφ_i(s')-φ_i(s)]*h_i|,
+           η_i - (1/τ)*α_i*[γφ_i(s')-φ_i(s)]*z_i*(|δ*φ_i(s)*h_i| - η_i))`
+        3. Normalized meta-update: `β_i -= θ*(1/η_i)*δ*[γφ_i(s')-φ_i(s)]*h_i`
+        4. Effective step-size normalization: `M = max(-exp(β)*[γφ(s')-φ(s)]^T*z, 1)`
+           then `β_i -= log(M)`
+        5. Update weights and traces as in TIDBD
+
+    Attributes:
+        initial_step_size: Initial per-weight step-size
+        meta_step_size: Meta learning rate theta
+        trace_decay: Eligibility trace decay lambda
+        normalizer_decay: Decay parameter tau for normalizers
+    """
+
+    def __init__(
+        self,
+        initial_step_size: float = 0.01,
+        meta_step_size: float = 0.01,
+        trace_decay: float = 0.0,
+        normalizer_decay: float = 10000.0,
+    ):
+        """Initialize AutoTDIDBD optimizer.
+
+        Args:
+            initial_step_size: Initial value for per-weight step-sizes
+            meta_step_size: Meta learning rate theta for adapting step-sizes
+            trace_decay: Eligibility trace decay lambda (0 = TD(0))
+            normalizer_decay: Decay parameter tau for normalizers (default: 10000)
+        """
+        self._initial_step_size = initial_step_size
+        self._meta_step_size = meta_step_size
+        self._trace_decay = trace_decay
+        self._normalizer_decay = normalizer_decay
+
+    def init(self, feature_dim: int) -> AutoTDIDBDState:
+        """Initialize AutoTDIDBD state.
+
+        Args:
+            feature_dim: Dimension of weight vector
+
+        Returns:
+            AutoTDIDBD state with per-weight step-sizes, traces, h traces, and normalizers
+        """
+        return AutoTDIDBDState(
+            log_step_sizes=jnp.full(
+                feature_dim, jnp.log(self._initial_step_size), dtype=jnp.float32
+            ),
+            eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+            h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+            normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
+            meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
+            trace_decay=jnp.array(self._trace_decay, dtype=jnp.float32),
+            normalizer_decay=jnp.array(self._normalizer_decay, dtype=jnp.float32),
+            bias_log_step_size=jnp.array(jnp.log(self._initial_step_size), dtype=jnp.float32),
+            bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
+            bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
+            bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
+        )
+
+    def update(
+        self,
+        state: AutoTDIDBDState,
+        td_error: Array,
+        observation: Array,
+        next_observation: Array,
+        gamma: Array,
+    ) -> TDOptimizerUpdate:
+        """Compute AutoTDIDBD weight update with normalized adaptive step-sizes.
+
+        Implements Algorithm 6 from Kearney et al. 2019.
+
+        Args:
+            state: Current AutoTDIDBD state
+            td_error: TD error δ = R + γV(s') - V(s)
+            observation: Current observation φ(s)
+            next_observation: Next observation φ(s')
+            gamma: Discount factor γ (0 at terminal)
+
+        Returns:
+            TDOptimizerUpdate with weight deltas and updated state
+        """
+        delta = jnp.squeeze(td_error)
+        theta = state.meta_step_size
+        lam = state.trace_decay
+        tau = state.normalizer_decay
+        gamma_scalar = jnp.squeeze(gamma)
+
+        # Feature difference: γ*φ(s') - φ(s)
+        feature_diff = gamma_scalar * next_observation - observation
+
+        # Current step-sizes
+        alphas = jnp.exp(state.log_step_sizes)
+
+        # Update normalizers (Algorithm 6, lines 5-7)
+        # η_i = max(|δ*[γφ_i(s')-φ_i(s)]*h_i|,
+        #           η_i - (1/τ)*α_i*[γφ_i(s')-φ_i(s)]*z_i*(|δ*φ_i(s)*h_i| - η_i))
+        abs_weight_update = jnp.abs(delta * feature_diff * state.h_traces)
+        normalizer_decay_term = (
+            (1.0 / tau)
+            * alphas
+            * feature_diff
+            * state.eligibility_traces
+            * (jnp.abs(delta * observation * state.h_traces) - state.normalizers)
+        )
+        new_normalizers = jnp.maximum(abs_weight_update, state.normalizers - normalizer_decay_term)
+        # Ensure normalizers don't go to zero
+        new_normalizers = jnp.maximum(new_normalizers, 1e-8)
+
+        # Normalized meta-update (Algorithm 6, line 9)
+        # β_i -= θ*(1/η_i)*δ*[γφ_i(s')-φ_i(s)]*h_i
+        normalized_gradient = delta * feature_diff * state.h_traces / new_normalizers
+        new_log_step_sizes = state.log_step_sizes - theta * normalized_gradient
+
+        # Effective step-size normalization (Algorithm 6, lines 10-11)
+        # M = max(-exp(β_i)*[γφ_i(s')-φ_i(s)]^T*z_i, 1)
+        # β_i -= log(M)
+        effective_step_size = -jnp.sum(
+            jnp.exp(new_log_step_sizes) * feature_diff * state.eligibility_traces
+        )
+        normalization_factor = jnp.maximum(effective_step_size, 1.0)
+        new_log_step_sizes = new_log_step_sizes - jnp.log(normalization_factor)
+
+        # Clip log step-sizes to prevent numerical issues
+        new_log_step_sizes = jnp.clip(new_log_step_sizes, -10.0, 2.0)
+
+        # Get updated step-sizes
+        new_alphas = jnp.exp(new_log_step_sizes)
+
+        # Update eligibility traces: z_i = γ*λ*z_i + φ_i(s)
+        new_eligibility_traces = gamma_scalar * lam * state.eligibility_traces + observation
+
+        # Compute weight delta: α_i*δ*z_i
+        weight_delta = new_alphas * delta * new_eligibility_traces
+
+        # Update h traces (ordinary gradient variant, Algorithm 6 line 15)
+        # h_i = h_i*[1 + α_i*[γφ_i(s')-φ_i(s)]*z_i]^+ + α_i*δ*z_i
+        h_decay = jnp.maximum(0.0, 1.0 + new_alphas * feature_diff * new_eligibility_traces)
+        new_h_traces = state.h_traces * h_decay + new_alphas * delta * new_eligibility_traces
+
+        # Bias updates
+        bias_alpha = jnp.exp(state.bias_log_step_size)
+        bias_feature_diff = gamma_scalar - 1.0  # For bias, φ(s) = 1
+
+        # Bias normalizer update
+        abs_bias_weight_update = jnp.abs(delta * bias_feature_diff * state.bias_h_trace)
+        bias_normalizer_decay_term = (
+            (1.0 / tau)
+            * bias_alpha
+            * bias_feature_diff
+            * state.bias_eligibility_trace
+            * (jnp.abs(delta * state.bias_h_trace) - state.bias_normalizer)
+        )
+        new_bias_normalizer = jnp.maximum(
+            abs_bias_weight_update, state.bias_normalizer - bias_normalizer_decay_term
+        )
+        new_bias_normalizer = jnp.maximum(new_bias_normalizer, 1e-8)
+
+        # Normalized bias meta-update
+        normalized_bias_gradient = (
+            delta * bias_feature_diff * state.bias_h_trace / new_bias_normalizer
+        )
+        new_bias_log_step_size = state.bias_log_step_size - theta * normalized_bias_gradient
+
+        # Effective step-size normalization for bias
+        bias_effective_step_size = (
+            -jnp.exp(new_bias_log_step_size) * bias_feature_diff * state.bias_eligibility_trace
+        )
+        bias_norm_factor = jnp.maximum(bias_effective_step_size, 1.0)
+        new_bias_log_step_size = new_bias_log_step_size - jnp.log(bias_norm_factor)
+
+        new_bias_log_step_size = jnp.clip(new_bias_log_step_size, -10.0, 2.0)
+        new_bias_alpha = jnp.exp(new_bias_log_step_size)
+
+        # Update bias eligibility trace
+        new_bias_eligibility_trace = gamma_scalar * lam * state.bias_eligibility_trace + 1.0
+
+        # Bias weight delta
+        bias_delta = new_bias_alpha * delta * new_bias_eligibility_trace
+
+        # Bias h trace update
+        bias_h_decay = jnp.maximum(
+            0.0, 1.0 + new_bias_alpha * bias_feature_diff * new_bias_eligibility_trace
+        )
+        new_bias_h_trace = (
+            state.bias_h_trace * bias_h_decay + new_bias_alpha * delta * new_bias_eligibility_trace
+        )
+
+        new_state = AutoTDIDBDState(
+            log_step_sizes=new_log_step_sizes,
+            eligibility_traces=new_eligibility_traces,
+            h_traces=new_h_traces,
+            normalizers=new_normalizers,
+            meta_step_size=theta,
+            trace_decay=lam,
+            normalizer_decay=tau,
+            bias_log_step_size=new_bias_log_step_size,
+            bias_eligibility_trace=new_bias_eligibility_trace,
+            bias_h_trace=new_bias_h_trace,
+            bias_normalizer=new_bias_normalizer,
+        )
+
+        return TDOptimizerUpdate(
+            weight_delta=weight_delta,
+            bias_delta=bias_delta,
+            new_state=new_state,
+            metrics={
+                "mean_step_size": jnp.mean(new_alphas),
+                "min_step_size": jnp.min(new_alphas),
+                "max_step_size": jnp.max(new_alphas),
+                "mean_eligibility_trace": jnp.mean(jnp.abs(new_eligibility_traces)),
+                "mean_normalizer": jnp.mean(new_normalizers),
             },
         )

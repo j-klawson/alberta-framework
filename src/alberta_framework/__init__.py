@@ -39,7 +39,7 @@ References
 - Tuning-free Step-size Adaptation (Mahmood et al., 2012)
 """
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 # Core types
 # Learners
@@ -47,12 +47,15 @@ from alberta_framework.core.learners import (
     LinearLearner,
     NormalizedLearnerState,
     NormalizedLinearLearner,
+    TDLinearLearner,
+    TDUpdateResult,
     UpdateResult,
     metrics_to_dicts,
     run_learning_loop,
     run_learning_loop_batched,
     run_normalized_learning_loop,
     run_normalized_learning_loop_batched,
+    run_td_learning_loop,
 )
 
 # Normalizers
@@ -63,9 +66,19 @@ from alberta_framework.core.normalizers import (
 )
 
 # Optimizers
-from alberta_framework.core.optimizers import IDBD, LMS, Autostep, Optimizer
+from alberta_framework.core.optimizers import (
+    IDBD,
+    LMS,
+    TDIDBD,
+    Autostep,
+    AutoTDIDBD,
+    Optimizer,
+    TDOptimizer,
+    TDOptimizerUpdate,
+)
 from alberta_framework.core.types import (
     AutostepState,
+    AutoTDIDBDState,
     BatchedLearningResult,
     BatchedNormalizedResult,
     IDBDState,
@@ -78,7 +91,12 @@ from alberta_framework.core.types import (
     StepSizeHistory,
     StepSizeTrackingConfig,
     Target,
+    TDIDBDState,
+    TDLearnerState,
+    TDTimeStep,
     TimeStep,
+    create_autotdidbd_state,
+    create_tdidbd_state,
 )
 
 # Streams - base
@@ -140,7 +158,7 @@ except ImportError:
 __all__ = [
     # Version
     "__version__",
-    # Types
+    # Types - Supervised Learning
     "AutostepState",
     "BatchedLearningResult",
     "BatchedNormalizedResult",
@@ -157,15 +175,28 @@ __all__ = [
     "Target",
     "TimeStep",
     "UpdateResult",
-    # Optimizers
+    # Types - TD Learning
+    "AutoTDIDBDState",
+    "TDIDBDState",
+    "TDLearnerState",
+    "TDTimeStep",
+    "TDUpdateResult",
+    "create_tdidbd_state",
+    "create_autotdidbd_state",
+    # Optimizers - Supervised Learning
     "Autostep",
     "IDBD",
     "LMS",
     "Optimizer",
+    # Optimizers - TD Learning
+    "AutoTDIDBD",
+    "TDIDBD",
+    "TDOptimizer",
+    "TDOptimizerUpdate",
     # Normalizers
     "OnlineNormalizer",
     "create_normalizer_state",
-    # Learners
+    # Learners - Supervised Learning
     "LinearLearner",
     "NormalizedLearnerState",
     "NormalizedLinearLearner",
@@ -174,6 +205,9 @@ __all__ = [
     "run_normalized_learning_loop",
     "run_normalized_learning_loop_batched",
     "metrics_to_dicts",
+    # Learners - TD Learning
+    "TDLinearLearner",
+    "run_td_learning_loop",
     # Streams - protocol
     "ScanStream",
     # Streams - synthetic

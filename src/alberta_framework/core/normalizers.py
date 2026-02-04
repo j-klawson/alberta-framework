@@ -101,10 +101,7 @@ class OnlineNormalizer:
 
         # Compute effective decay (ramp up from 0 to target decay)
         # This prevents instability in early steps
-        effective_decay = jnp.minimum(
-            state.decay,
-            1.0 - 1.0 / (new_count + 1.0)
-        )
+        effective_decay = jnp.minimum(state.decay, 1.0 - 1.0 / (new_count + 1.0))
 
         # Update mean using exponential moving average
         delta = observation - state.mean

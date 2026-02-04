@@ -1,6 +1,5 @@
 """Pytest configuration and fixtures for Alberta Framework tests."""
 
-import chex
 import jax.numpy as jnp
 import jax.random as jr
 import pytest

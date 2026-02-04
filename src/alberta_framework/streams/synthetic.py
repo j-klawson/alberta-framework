@@ -540,9 +540,7 @@ class PeriodicChangeStream:
             step_count=jnp.array(0, dtype=jnp.int32),
         )
 
-    def step(
-        self, state: PeriodicChangeState, idx: Array
-    ) -> tuple[TimeStep, PeriodicChangeState]:
+    def step(self, state: PeriodicChangeState, idx: Array) -> tuple[TimeStep, PeriodicChangeState]:
         """Generate one time step.
 
         Args:
@@ -557,9 +555,7 @@ class PeriodicChangeStream:
 
         # Compute oscillating weights: w(t) = base + amplitude * sin(2π * t / period + phase)
         t = state.step_count.astype(jnp.float32)
-        oscillation = self._amplitude * jnp.sin(
-            2.0 * jnp.pi * t / self._period + state.phases
-        )
+        oscillation = self._amplitude * jnp.sin(2.0 * jnp.pi * t / self._period + state.phases)
         true_weights = state.base_weights + oscillation
 
         # Generate observation
@@ -955,9 +951,7 @@ class ScaleDriftStream:
             step_count=jnp.array(0, dtype=jnp.int32),
         )
 
-    def step(
-        self, state: ScaleDriftState, idx: Array
-    ) -> tuple[TimeStep, ScaleDriftState]:
+    def step(self, state: ScaleDriftState, idx: Array) -> tuple[TimeStep, ScaleDriftState]:
         """Generate one time step.
 
         Args:

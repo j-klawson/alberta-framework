@@ -2,7 +2,6 @@
 
 import chex
 import jax.numpy as jnp
-import jax.random as jr
 import pytest
 
 from alberta_framework import (
@@ -104,16 +103,12 @@ class TestAbruptChangeStream:
         for i in range(9):
             _, state = stream.step(state, jnp.array(i))
 
-        weights_at_9 = state.true_weights
-
         # Run one more step (step_count becomes 10)
         _, state = stream.step(state, jnp.array(9))
 
-        weights_at_10 = state.true_weights
-
         # Weights should have changed at step 10
         with pytest.raises(AssertionError):
-            chex.assert_trees_all_close(weights_at_0, weights_at_10)
+            chex.assert_trees_all_close(weights_at_0, state.true_weights)
 
     def test_generates_valid_timesteps(self, rng_key):
         """Should generate valid TimeStep instances."""
@@ -296,9 +291,7 @@ class TestPeriodicChangeStream:
         # At t=period/2, oscillation should be different from t=0
         # sin(π + φ) = -sin(φ), so weights should differ
         t_half = period // 2
-        oscillation_half = 2.0 * jnp.sin(
-            2.0 * jnp.pi * t_half / period + state.phases
-        )
+        oscillation_half = 2.0 * jnp.sin(2.0 * jnp.pi * t_half / period + state.phases)
         weights_half = state.base_weights + oscillation_half
 
         t_0 = 0
@@ -378,17 +371,13 @@ class TestScaledStreamWrapper:
         scales = jnp.array([0.01, 0.1, 1.0, 10.0, 100.0])
 
         # Test with AbruptChangeStream
-        stream1 = ScaledStreamWrapper(
-            AbruptChangeStream(feature_dim=5), feature_scales=scales
-        )
+        stream1 = ScaledStreamWrapper(AbruptChangeStream(feature_dim=5), feature_scales=scales)
         state1 = stream1.init(rng_key)
         ts1, _ = stream1.step(state1, jnp.array(0))
         chex.assert_shape(ts1.observation, (5,))
 
         # Test with CyclicStream
-        stream2 = ScaledStreamWrapper(
-            CyclicStream(feature_dim=5), feature_scales=scales
-        )
+        stream2 = ScaledStreamWrapper(CyclicStream(feature_dim=5), feature_scales=scales)
         state2 = stream2.init(rng_key)
         ts2, _ = stream2.step(state2, jnp.array(0))
         chex.assert_shape(ts2.observation, (5,))
@@ -471,16 +460,12 @@ class TestDynamicScaleShiftStream:
         for i in range(9):
             _, state = stream.step(state, jnp.array(i))
 
-        scales_at_9 = state.current_scales
-
         # Run one more step (step_count becomes 10)
         _, state = stream.step(state, jnp.array(9))
 
-        scales_at_10 = state.current_scales
-
         # Scales should have changed at step 10
         with pytest.raises(AssertionError):
-            chex.assert_trees_all_close(initial_scales, scales_at_10)
+            chex.assert_trees_all_close(initial_scales, state.current_scales)
 
     def test_weights_change_at_interval(self, rng_key):
         """Weights should change at specified interval."""

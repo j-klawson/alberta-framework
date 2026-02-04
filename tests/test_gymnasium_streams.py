@@ -6,8 +6,8 @@ import pytest
 # Skip all tests if gymnasium is not installed
 gymnasium = pytest.importorskip("gymnasium")
 
-from alberta_framework import TimeStep
-from alberta_framework.streams.gymnasium import (
+from alberta_framework import TimeStep  # noqa: E402
+from alberta_framework.streams.gymnasium import (  # noqa: E402
     GymnasiumStream,
     PredictionMode,
     TDStream,
@@ -33,18 +33,14 @@ class TestGymnasiumStreamRewardMode:
     def test_feature_dim_with_action(self):
         """Feature dim should include observation + action when enabled."""
         env = gymnasium.make("CartPole-v1")
-        stream = GymnasiumStream(
-            env, mode=PredictionMode.REWARD, include_action_in_features=True
-        )
+        stream = GymnasiumStream(env, mode=PredictionMode.REWARD, include_action_in_features=True)
         # CartPole: obs=4, action=1 (Discrete)
         assert stream.feature_dim == 5
 
     def test_feature_dim_without_action(self):
         """Feature dim should be observation only when action excluded."""
         env = gymnasium.make("CartPole-v1")
-        stream = GymnasiumStream(
-            env, mode=PredictionMode.REWARD, include_action_in_features=False
-        )
+        stream = GymnasiumStream(env, mode=PredictionMode.REWARD, include_action_in_features=False)
         # CartPole: obs=4
         assert stream.feature_dim == 4
 
@@ -111,9 +107,7 @@ class TestGymnasiumStreamValueMode:
     def test_generates_valid_targets(self):
         """Targets should be valid scalar values."""
         env = gymnasium.make("CartPole-v1")
-        stream = GymnasiumStream(
-            env, mode=PredictionMode.VALUE, gamma=0.99, seed=42
-        )
+        stream = GymnasiumStream(env, mode=PredictionMode.VALUE, gamma=0.99, seed=42)
 
         for i, timestep in enumerate(stream):
             if i >= 50:
@@ -124,9 +118,7 @@ class TestGymnasiumStreamValueMode:
     def test_value_estimator_is_used(self):
         """Value estimator should be used for bootstrapping."""
         env = gymnasium.make("CartPole-v1")
-        stream = GymnasiumStream(
-            env, mode=PredictionMode.VALUE, gamma=0.99, seed=42
-        )
+        stream = GymnasiumStream(env, mode=PredictionMode.VALUE, gamma=0.99, seed=42)
 
         # Set a constant value estimator
         stream.set_value_estimator(lambda x: 10.0)
@@ -140,9 +132,7 @@ class TestGymnasiumStreamValueMode:
 
         # Reset and run without estimator
         env2 = gymnasium.make("CartPole-v1")
-        stream2 = GymnasiumStream(
-            env2, mode=PredictionMode.VALUE, gamma=0.99, seed=42
-        )
+        stream2 = GymnasiumStream(env2, mode=PredictionMode.VALUE, gamma=0.99, seed=42)
 
         targets_without = []
         for i, timestep in enumerate(stream2):
@@ -372,9 +362,7 @@ class TestMakeEpsilonGreedyPolicy:
         def base_policy(obs):
             return 1
 
-        policy = make_epsilon_greedy_policy(
-            base_policy, env, epsilon=0.0, seed=42
-        )
+        policy = make_epsilon_greedy_policy(base_policy, env, epsilon=0.0, seed=42)
 
         obs = jnp.zeros(4)
         for _ in range(20):
@@ -389,9 +377,7 @@ class TestMakeEpsilonGreedyPolicy:
         def base_policy(obs):
             return 1
 
-        policy = make_epsilon_greedy_policy(
-            base_policy, env, epsilon=1.0, seed=42
-        )
+        policy = make_epsilon_greedy_policy(base_policy, env, epsilon=1.0, seed=42)
 
         obs = jnp.zeros(4)
         actions = [policy(obs) for _ in range(100)]

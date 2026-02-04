@@ -5,7 +5,7 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
-from typing import cast
+from typing import Protocol, TypeVar, cast
 
 import chex
 import jax
@@ -14,9 +14,10 @@ from jax import Array
 from jaxtyping import Float
 
 from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
-from alberta_framework.core.optimizers import LMS, Optimizer
+from alberta_framework.core.optimizers import LMS, TDIDBD, Optimizer, TDOptimizer
 from alberta_framework.core.types import (
     AutostepState,
+    AutoTDIDBDState,
     BatchedLearningResult,
     BatchedNormalizedResult,
     IDBDState,
@@ -29,11 +30,20 @@ from alberta_framework.core.types import (
     StepSizeHistory,
     StepSizeTrackingConfig,
     Target,
+    TDIDBDState,
+    TDLearnerState,
+    TDTimeStep,
 )
 from alberta_framework.streams.base import ScanStream
 
+# Type variable for TD stream state
+StateT = TypeVar("StateT")
+
 # Type alias for any optimizer type
 AnyOptimizer = Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
+
+# Type alias for any TD optimizer type
+AnyTDOptimizer = TDOptimizer[TDIDBDState] | TDOptimizer[AutoTDIDBDState]
 
 
 @chex.dataclass(frozen=True)
@@ -167,7 +177,8 @@ class LinearLearner:
         # Note: type ignore needed because we can't statically prove optimizer_state
         # matches the optimizer's expected state type (though they will at runtime)
         opt_update = self._optimizer.update(
-            state.optimizer_state,            error,
+            state.optimizer_state,
+            error,
             observation,
         )
 
@@ -270,9 +281,7 @@ def run_learning_loop[StreamStateT](
 
         # Pre-allocate history arrays
         step_size_history = jnp.zeros((num_recordings, feature_dim), dtype=jnp.float32)
-        bias_history = (
-            jnp.zeros(num_recordings, dtype=jnp.float32) if include_bias else None
-        )
+        bias_history = jnp.zeros(num_recordings, dtype=jnp.float32) if include_bias else None
         recording_indices = jnp.zeros(num_recordings, dtype=jnp.int32)
 
         # Check if we need to track Autostep normalizers
@@ -285,9 +294,7 @@ def run_learning_loop[StreamStateT](
         )
 
         def step_fn_with_tracking(
-            carry: tuple[
-                LearnerState, StreamStateT, Array, Array | None, Array, Array | None
-            ],
+            carry: tuple[LearnerState, StreamStateT, Array, Array | None, Array, Array | None],
             idx: Array,
         ) -> tuple[
             tuple[LearnerState, StreamStateT, Array, Array | None, Array, Array | None],
@@ -348,8 +355,7 @@ def run_learning_loop[StreamStateT](
             if norm_history is not None and hasattr(opt_state, "normalizers"):
                 new_norm_history = jax.lax.cond(
                     should_record,
-                    lambda _: norm_history.at[recording_idx].set(
-                        opt_state.normalizers                    ),
+                    lambda _: norm_history.at[recording_idx].set(opt_state.normalizers),
                     lambda _: norm_history,
                     None,
                 )
@@ -373,15 +379,16 @@ def run_learning_loop[StreamStateT](
         )
 
         (
-            final_learner,
-            _,
-            final_ss_history,
-            final_b_history,
-            final_rec_indices,
-            final_norm_history,
-        ), metrics = jax.lax.scan(
-            step_fn_with_tracking, initial_carry, jnp.arange(num_steps)
-        )
+            (
+                final_learner,
+                _,
+                final_ss_history,
+                final_b_history,
+                final_rec_indices,
+                final_norm_history,
+            ),
+            metrics,
+        ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
 
         history = StepSizeHistory(
             step_sizes=final_ss_history,
@@ -454,9 +461,7 @@ class NormalizedLinearLearner:
         Returns:
             Scalar prediction y = w @ normalize(x) + b
         """
-        normalized_obs = self._normalizer.normalize_only(
-            state.normalizer_state, observation
-        )
+        normalized_obs = self._normalizer.normalize_only(state.normalizer_state, observation)
         return self._learner.predict(state.learner_state, normalized_obs)
 
     def update(
@@ -602,9 +607,7 @@ def run_normalized_learning_loop[StreamStateT](
 
     # Tracking enabled - need to set up history arrays
     ss_interval = step_size_tracking.interval if step_size_tracking else num_steps + 1
-    norm_interval = (
-        normalizer_tracking.interval if normalizer_tracking else num_steps + 1
-    )
+    norm_interval = normalizer_tracking.interval if normalizer_tracking else num_steps + 1
 
     ss_num_recordings = num_steps // ss_interval if step_size_tracking else 0
     norm_num_recordings = num_steps // norm_interval if normalizer_tracking else 0
@@ -620,14 +623,10 @@ def run_normalized_learning_loop[StreamStateT](
         if step_size_tracking and step_size_tracking.include_bias
         else None
     )
-    ss_rec_indices = (
-        jnp.zeros(ss_num_recordings, dtype=jnp.int32) if step_size_tracking else None
-    )
+    ss_rec_indices = jnp.zeros(ss_num_recordings, dtype=jnp.int32) if step_size_tracking else None
 
     # Check if we need to track Autostep normalizers
-    track_autostep_normalizers = hasattr(
-        learner_state.learner_state.optimizer_state, "normalizers"
-    )
+    track_autostep_normalizers = hasattr(learner_state.learner_state.optimizer_state, "normalizers")
     ss_normalizers = (
         jnp.zeros((ss_num_recordings, feature_dim), dtype=jnp.float32)
         if step_size_tracking and track_autostep_normalizers
@@ -744,8 +743,7 @@ def run_normalized_learning_loop[StreamStateT](
             if ss_norm is not None and hasattr(opt_state, "normalizers"):
                 new_ss_norm = jax.lax.cond(
                     should_record_ss,
-                    lambda _: ss_norm.at[recording_idx].set(
-                        opt_state.normalizers                    ),
+                    lambda _: ss_norm.at[recording_idx].set(opt_state.normalizers),
                     lambda _: ss_norm,
                     None,
                 )
@@ -809,18 +807,19 @@ def run_normalized_learning_loop[StreamStateT](
     )
 
     (
-        final_learner,
-        _,
-        final_ss_hist,
-        final_ss_bias_hist,
-        final_ss_rec,
-        final_ss_norm,
-        final_n_means,
-        final_n_vars,
-        final_n_rec,
-    ), metrics = jax.lax.scan(
-        step_fn_with_tracking, initial_carry, jnp.arange(num_steps)
-    )
+        (
+            final_learner,
+            _,
+            final_ss_hist,
+            final_ss_bias_hist,
+            final_ss_rec,
+            final_ss_norm,
+            final_n_means,
+            final_n_vars,
+            final_n_rec,
+        ),
+        metrics,
+    ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
 
     # Build return values based on what was tracked
     ss_history_result = None
@@ -828,14 +827,17 @@ def run_normalized_learning_loop[StreamStateT](
         ss_history_result = StepSizeHistory(
             step_sizes=final_ss_hist,
             bias_step_sizes=final_ss_bias_hist,
-            recording_indices=final_ss_rec,            normalizers=final_ss_norm,
+            recording_indices=final_ss_rec,
+            normalizers=final_ss_norm,
         )
 
     norm_history_result = None
     if normalizer_tracking is not None and final_n_means is not None:
         norm_history_result = NormalizerHistory(
             means=final_n_means,
-            variances=final_n_vars,            recording_indices=final_n_rec,        )
+            variances=final_n_vars,
+            recording_indices=final_n_rec,
+        )
 
     # Return appropriate tuple based on what was tracked
     if ss_history_result is not None and norm_history_result is not None:
@@ -894,15 +896,14 @@ def run_learning_loop_batched[StreamStateT](
     mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average over seeds
     ```
     """
+
     # Define single-seed function that returns consistent structure
     def single_seed_run(key: Array) -> tuple[LearnerState, Array, StepSizeHistory | None]:
         result = run_learning_loop(
             learner, stream, num_steps, key, learner_state, step_size_tracking
         )
         if step_size_tracking is not None:
-            state, metrics, history = cast(
-                tuple[LearnerState, Array, StepSizeHistory], result
-            )
+            state, metrics, history = cast(tuple[LearnerState, Array, StepSizeHistory], result)
             return state, metrics, history
         else:
             state, metrics = cast(tuple[LearnerState, Array], result)
@@ -982,15 +983,13 @@ def run_normalized_learning_loop_batched[StreamStateT](
     mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average over seeds
     ```
     """
+
     # Define single-seed function that returns consistent structure
     def single_seed_run(
         key: Array,
-    ) -> tuple[
-        NormalizedLearnerState, Array, StepSizeHistory | None, NormalizerHistory | None
-    ]:
+    ) -> tuple[NormalizedLearnerState, Array, StepSizeHistory | None, NormalizerHistory | None]:
         result = run_normalized_learning_loop(
-            learner, stream, num_steps, key, learner_state,
-            step_size_tracking, normalizer_tracking
+            learner, stream, num_steps, key, learner_state, step_size_tracking, normalizer_tracking
         )
 
         # Unpack based on what tracking was enabled
@@ -1015,9 +1014,9 @@ def run_normalized_learning_loop_batched[StreamStateT](
             return state, metrics, None, None
 
     # vmap over the keys dimension
-    batched_states, batched_metrics, batched_ss_history, batched_norm_history = (
-        jax.vmap(single_seed_run)(keys)
-    )
+    batched_states, batched_metrics, batched_ss_history, batched_norm_history = jax.vmap(
+        single_seed_run
+    )(keys)
 
     # Reconstruct batched histories if tracking was enabled
     if step_size_tracking is not None and batched_ss_history is not None:
@@ -1068,3 +1067,222 @@ def metrics_to_dicts(metrics: Array, normalized: bool = False) -> list[dict[str,
             d["normalizer_mean_var"] = float(row[3])
         result.append(d)
     return result
+
+
+# =============================================================================
+# TD Learning (for Step 3+ of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class TDUpdateResult:
+    """Result of a TD learner update step.
+
+    Attributes:
+        state: Updated TD learner state
+        prediction: Value prediction V(s) before update
+        td_error: TD error δ = R + γV(s') - V(s)
+        metrics: Array of metrics [squared_td_error, td_error, mean_step_size, ...]
+    """
+
+    state: TDLearnerState
+    prediction: Prediction
+    td_error: Float[Array, ""]
+    metrics: Float[Array, " 4"]
+
+
+class TDLinearLearner:
+    """Linear function approximator for TD learning.
+
+    Computes value predictions as: `V(s) = w @ φ(s) + b`
+
+    The learner maintains weights, bias, and eligibility traces, delegating
+    the adaptation of learning rates to the TD optimizer (e.g., TDIDBD).
+
+    This follows the Alberta Plan philosophy of temporal uniformity:
+    every component updates at every time step.
+
+    Reference: Kearney et al. 2019, "Learning Feature Relevance Through Step Size
+    Adaptation in Temporal-Difference Learning"
+
+    Attributes:
+        optimizer: The TD optimizer to use for weight updates
+    """
+
+    def __init__(self, optimizer: AnyTDOptimizer | None = None):
+        """Initialize the TD linear learner.
+
+        Args:
+            optimizer: TD optimizer for weight updates. Defaults to TDIDBD()
+        """
+        self._optimizer: AnyTDOptimizer = optimizer or TDIDBD()
+
+    def init(self, feature_dim: int) -> TDLearnerState:
+        """Initialize TD learner state.
+
+        Args:
+            feature_dim: Dimension of the input feature vector
+
+        Returns:
+            Initial TD learner state with zero weights and bias
+        """
+        optimizer_state = self._optimizer.init(feature_dim)
+
+        return TDLearnerState(
+            weights=jnp.zeros(feature_dim, dtype=jnp.float32),
+            bias=jnp.array(0.0, dtype=jnp.float32),
+            optimizer_state=optimizer_state,
+        )
+
+    def predict(self, state: TDLearnerState, observation: Observation) -> Prediction:
+        """Compute value prediction for an observation.
+
+        Args:
+            state: Current TD learner state
+            observation: Input feature vector φ(s)
+
+        Returns:
+            Scalar value prediction `V(s) = w @ φ(s) + b`
+        """
+        return jnp.atleast_1d(jnp.dot(state.weights, observation) + state.bias)
+
+    def update(
+        self,
+        state: TDLearnerState,
+        observation: Observation,
+        reward: Array,
+        next_observation: Observation,
+        gamma: Array,
+    ) -> TDUpdateResult:
+        """Update learner given a TD transition.
+
+        Performs one step of TD learning:
+        1. Compute V(s) and V(s')
+        2. Compute TD error δ = R + γV(s') - V(s)
+        3. Get weight updates from TD optimizer
+        4. Apply updates to weights and bias
+
+        Args:
+            state: Current TD learner state
+            observation: Current observation φ(s)
+            reward: Reward R received
+            next_observation: Next observation φ(s')
+            gamma: Discount factor γ (0 at terminal states)
+
+        Returns:
+            TDUpdateResult with new state, prediction, TD error, and metrics
+        """
+        # Compute predictions
+        prediction = self.predict(state, observation)
+        next_prediction = self.predict(state, next_observation)
+
+        # Compute TD error: δ = R + γV(s') - V(s)
+        gamma_scalar = jnp.squeeze(gamma)
+        td_error = (
+            jnp.squeeze(reward)
+            + gamma_scalar * jnp.squeeze(next_prediction)
+            - jnp.squeeze(prediction)
+        )
+
+        # Get update from TD optimizer
+        opt_update = self._optimizer.update(
+            state.optimizer_state,
+            td_error,
+            observation,
+            next_observation,
+            gamma,
+        )
+
+        # Apply updates
+        new_weights = state.weights + opt_update.weight_delta
+        new_bias = state.bias + opt_update.bias_delta
+
+        new_state = TDLearnerState(
+            weights=new_weights,
+            bias=new_bias,
+            optimizer_state=opt_update.new_state,
+        )
+
+        # Pack metrics as array for scan compatibility
+        # Format: [squared_td_error, td_error, mean_step_size, mean_eligibility_trace]
+        squared_td_error = td_error**2
+        mean_step_size = opt_update.metrics.get("mean_step_size", 0.0)
+        mean_elig_trace = opt_update.metrics.get("mean_eligibility_trace", 0.0)
+        metrics = jnp.array(
+            [squared_td_error, td_error, mean_step_size, mean_elig_trace],
+            dtype=jnp.float32,
+        )
+
+        return TDUpdateResult(
+            state=new_state,
+            prediction=prediction,
+            td_error=jnp.atleast_1d(td_error),
+            metrics=metrics,
+        )
+
+
+class TDStream(Protocol[StateT]):
+    """Protocol for TD experience streams.
+
+    TD streams produce (s, r, s', γ) tuples for temporal-difference learning.
+    """
+
+    feature_dim: int
+
+    def init(self, key: Array) -> StateT:
+        """Initialize stream state."""
+        ...
+
+    def step(self, state: StateT, idx: Array) -> tuple[TDTimeStep, StateT]:
+        """Generate next TD transition."""
+        ...
+
+
+def run_td_learning_loop[StreamStateT](
+    learner: TDLinearLearner,
+    stream: TDStream[StreamStateT],
+    num_steps: int,
+    key: Array,
+    learner_state: TDLearnerState | None = None,
+) -> tuple[TDLearnerState, Array]:
+    """Run the TD learning loop using jax.lax.scan.
+
+    This is a JIT-compiled learning loop that uses scan for efficiency.
+    It returns metrics as a fixed-size array rather than a list of dicts.
+
+    Args:
+        learner: The TD learner to train
+        stream: TD experience stream providing (s, r, s', γ) tuples
+        num_steps: Number of learning steps to run
+        key: JAX random key for stream initialization
+        learner_state: Initial state (if None, will be initialized from stream)
+
+    Returns:
+        Tuple of (final_state, metrics_array) where metrics_array has shape
+        (num_steps, 4) with columns [squared_td_error, td_error, mean_step_size,
+        mean_eligibility_trace]
+    """
+    # Initialize states
+    if learner_state is None:
+        learner_state = learner.init(stream.feature_dim)
+    stream_state = stream.init(key)
+
+    def step_fn(
+        carry: tuple[TDLearnerState, StreamStateT], idx: Array
+    ) -> tuple[tuple[TDLearnerState, StreamStateT], Array]:
+        l_state, s_state = carry
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(
+            l_state,
+            timestep.observation,
+            timestep.reward,
+            timestep.next_observation,
+            timestep.gamma,
+        )
+        return (result.state, new_s_state), result.metrics
+
+    (final_learner, _), metrics = jax.lax.scan(
+        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+    )
+
+    return final_learner, metrics

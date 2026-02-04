@@ -255,6 +255,118 @@ def create_idbd_state(
     )
 
 
+# =============================================================================
+# TD Learning Types (for Step 3+ of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class TDTimeStep:
+    """Single experience from a TD stream.
+
+    Represents a transition (s, r, s', gamma) for temporal-difference learning.
+
+    Attributes:
+        observation: Feature vector φ(s)
+        reward: Reward R received
+        next_observation: Feature vector φ(s')
+        gamma: Discount factor γ_t (0 at terminal states)
+    """
+
+    observation: Float[Array, " feature_dim"]
+    reward: Float[Array, ""]
+    next_observation: Float[Array, " feature_dim"]
+    gamma: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
+class TDIDBDState:
+    """State for the TD-IDBD (Temporal-Difference IDBD) optimizer.
+
+    TD-IDBD extends IDBD to temporal-difference learning with eligibility traces.
+    Maintains per-weight adaptive step-sizes that are meta-learned based on
+    gradient correlation in the TD setting.
+
+    Reference: Kearney et al. 2019, "Learning Feature Relevance Through Step Size
+    Adaptation in Temporal-Difference Learning"
+
+    Attributes:
+        log_step_sizes: Log of per-weight step-sizes (log alpha_i)
+        eligibility_traces: Eligibility traces z_i for temporal credit assignment
+        h_traces: Per-weight h traces for gradient correlation
+        meta_step_size: Meta learning rate theta for adapting step-sizes
+        trace_decay: Eligibility trace decay parameter lambda
+        bias_log_step_size: Log step-size for the bias term
+        bias_eligibility_trace: Eligibility trace for the bias
+        bias_h_trace: h trace for the bias term
+    """
+
+    log_step_sizes: Float[Array, " feature_dim"]
+    eligibility_traces: Float[Array, " feature_dim"]
+    h_traces: Float[Array, " feature_dim"]
+    meta_step_size: Float[Array, ""]
+    trace_decay: Float[Array, ""]
+    bias_log_step_size: Float[Array, ""]
+    bias_eligibility_trace: Float[Array, ""]
+    bias_h_trace: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
+class AutoTDIDBDState:
+    """State for the AutoTDIDBD optimizer.
+
+    AutoTDIDBD adds AutoStep-style normalization to TDIDBD for improved stability.
+    Includes normalizers for the meta-weight updates and effective step-size
+    normalization to prevent overshooting.
+
+    Reference: Kearney et al. 2019, Algorithm 6
+
+    Attributes:
+        log_step_sizes: Log of per-weight step-sizes (log alpha_i)
+        eligibility_traces: Eligibility traces z_i
+        h_traces: Per-weight h traces for gradient correlation
+        normalizers: Running max of absolute gradient correlations (eta_i)
+        meta_step_size: Meta learning rate theta
+        trace_decay: Eligibility trace decay parameter lambda
+        normalizer_decay: Decay parameter tau for normalizers
+        bias_log_step_size: Log step-size for the bias term
+        bias_eligibility_trace: Eligibility trace for the bias
+        bias_h_trace: h trace for the bias term
+        bias_normalizer: Normalizer for the bias gradient correlation
+    """
+
+    log_step_sizes: Float[Array, " feature_dim"]
+    eligibility_traces: Float[Array, " feature_dim"]
+    h_traces: Float[Array, " feature_dim"]
+    normalizers: Float[Array, " feature_dim"]
+    meta_step_size: Float[Array, ""]
+    trace_decay: Float[Array, ""]
+    normalizer_decay: Float[Array, ""]
+    bias_log_step_size: Float[Array, ""]
+    bias_eligibility_trace: Float[Array, ""]
+    bias_h_trace: Float[Array, ""]
+    bias_normalizer: Float[Array, ""]
+
+
+# Union type for TD optimizer states
+TDOptimizerState = TDIDBDState | AutoTDIDBDState
+
+
+@chex.dataclass(frozen=True)
+class TDLearnerState:
+    """State for a TD linear learner.
+
+    Attributes:
+        weights: Weight vector for linear value function approximation
+        bias: Bias term
+        optimizer_state: State maintained by the TD optimizer
+    """
+
+    weights: Float[Array, " feature_dim"]
+    bias: Float[Array, ""]
+    optimizer_state: TDOptimizerState
+
+
 def create_autostep_state(
     feature_dim: int,
     initial_step_size: float = 0.01,
@@ -280,5 +392,68 @@ def create_autostep_state(
         normalizer_decay=jnp.array(normalizer_decay, dtype=jnp.float32),
         bias_step_size=jnp.array(initial_step_size, dtype=jnp.float32),
         bias_trace=jnp.array(0.0, dtype=jnp.float32),
+        bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
+    )
+
+
+def create_tdidbd_state(
+    feature_dim: int,
+    initial_step_size: float = 0.01,
+    meta_step_size: float = 0.01,
+    trace_decay: float = 0.0,
+) -> TDIDBDState:
+    """Create initial TD-IDBD optimizer state.
+
+    Args:
+        feature_dim: Dimension of the feature vector
+        initial_step_size: Initial per-weight step-size
+        meta_step_size: Meta learning rate theta for adapting step-sizes
+        trace_decay: Eligibility trace decay parameter lambda (0 = TD(0))
+
+    Returns:
+        Initial TD-IDBD state
+    """
+    return TDIDBDState(
+        log_step_sizes=jnp.full(feature_dim, jnp.log(initial_step_size), dtype=jnp.float32),
+        eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+        h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+        meta_step_size=jnp.array(meta_step_size, dtype=jnp.float32),
+        trace_decay=jnp.array(trace_decay, dtype=jnp.float32),
+        bias_log_step_size=jnp.array(jnp.log(initial_step_size), dtype=jnp.float32),
+        bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
+        bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
+    )
+
+
+def create_autotdidbd_state(
+    feature_dim: int,
+    initial_step_size: float = 0.01,
+    meta_step_size: float = 0.01,
+    trace_decay: float = 0.0,
+    normalizer_decay: float = 10000.0,
+) -> AutoTDIDBDState:
+    """Create initial AutoTDIDBD optimizer state.
+
+    Args:
+        feature_dim: Dimension of the feature vector
+        initial_step_size: Initial per-weight step-size
+        meta_step_size: Meta learning rate theta for adapting step-sizes
+        trace_decay: Eligibility trace decay parameter lambda (0 = TD(0))
+        normalizer_decay: Decay parameter tau for normalizers (default: 10000)
+
+    Returns:
+        Initial AutoTDIDBD state
+    """
+    return AutoTDIDBDState(
+        log_step_sizes=jnp.full(feature_dim, jnp.log(initial_step_size), dtype=jnp.float32),
+        eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+        h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+        normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
+        meta_step_size=jnp.array(meta_step_size, dtype=jnp.float32),
+        trace_decay=jnp.array(trace_decay, dtype=jnp.float32),
+        normalizer_decay=jnp.array(normalizer_decay, dtype=jnp.float32),
+        bias_log_step_size=jnp.array(jnp.log(initial_step_size), dtype=jnp.float32),
+        bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
+        bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
         bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
     )

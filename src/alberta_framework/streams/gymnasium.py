@@ -117,9 +117,7 @@ def _flatten_action(action: Any, space: gymnasium.spaces.Space[Any]) -> Array:
         raise ValueError(f"Unsupported space type: {type(space).__name__}")
 
 
-def make_random_policy(
-    env: gymnasium.Env[Any, Any], seed: int = 0
-) -> Callable[[Array], Any]:
+def make_random_policy(env: gymnasium.Env[Any, Any], seed: int = 0) -> Callable[[Array], Any]:
     """Create a random action policy for an environment.
 
     Args:
@@ -147,10 +145,7 @@ def make_random_policy(
             return jr.uniform(key, action_space.shape, minval=low, maxval=high)
         elif isinstance(action_space, gymnasium.spaces.MultiDiscrete):
             nvec = action_space.nvec
-            return [
-                int(jr.randint(jr.fold_in(key, i), (), 0, n))
-                for i, n in enumerate(nvec)
-            ]
+            return [int(jr.randint(jr.fold_in(key, i), (), 0, n)) for i, n in enumerate(nvec)]
         else:
             raise ValueError(f"Unsupported action space: {type(action_space).__name__}")
 
@@ -284,9 +279,7 @@ def learn_from_trajectory(
     if learner_state is None:
         learner_state = learner.init(observations.shape[1])
 
-    def step_fn(
-        state: LearnerState, inputs: tuple[Array, Array]
-    ) -> tuple[LearnerState, Array]:
+    def step_fn(state: LearnerState, inputs: tuple[Array, Array]) -> tuple[LearnerState, Array]:
         obs, target = inputs
         result = learner.update(state, obs, target)
         return result.state, result.metrics

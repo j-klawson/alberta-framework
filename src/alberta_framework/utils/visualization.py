@@ -69,29 +69,33 @@ def set_publication_style(
         pass
 
     # Configure matplotlib
-    plt.rcParams.update({
-        "font.size": font_size,
-        "axes.labelsize": font_size,
-        "axes.titlesize": font_size + 1,
-        "xtick.labelsize": font_size - 1,
-        "ytick.labelsize": font_size - 1,
-        "legend.fontsize": font_size - 1,
-        "figure.figsize": (_current_style["figure_width"], _current_style["figure_height"]),
-        "figure.dpi": _current_style["dpi"],
-        "savefig.dpi": _current_style["dpi"],
-        "lines.linewidth": _current_style["line_width"],
-        "lines.markersize": _current_style["marker_size"],
-        "axes.linewidth": 0.8,
-        "grid.linewidth": 0.5,
-        "grid.alpha": 0.3,
-    })
+    plt.rcParams.update(
+        {
+            "font.size": font_size,
+            "axes.labelsize": font_size,
+            "axes.titlesize": font_size + 1,
+            "xtick.labelsize": font_size - 1,
+            "ytick.labelsize": font_size - 1,
+            "legend.fontsize": font_size - 1,
+            "figure.figsize": (_current_style["figure_width"], _current_style["figure_height"]),
+            "figure.dpi": _current_style["dpi"],
+            "savefig.dpi": _current_style["dpi"],
+            "lines.linewidth": _current_style["line_width"],
+            "lines.markersize": _current_style["marker_size"],
+            "axes.linewidth": 0.8,
+            "grid.linewidth": 0.5,
+            "grid.alpha": 0.3,
+        }
+    )
 
     if use_latex:
-        plt.rcParams.update({
-            "text.usetex": True,
-            "font.family": "serif",
-            "font.serif": ["Computer Modern Roman"],
-        })
+        plt.rcParams.update(
+            {
+                "text.usetex": True,
+                "font.family": "serif",
+                "font.serif": ["Computer Modern Roman"],
+            }
+        )
 
 
 def plot_learning_curves(
@@ -142,10 +146,12 @@ def plot_learning_curves(
         metric_array = agg.metric_arrays[metric]
 
         # Smooth each seed individually, then compute statistics
-        smoothed = np.array([
-            compute_running_mean(metric_array[seed_idx], window_size)
-            for seed_idx in range(metric_array.shape[0])
-        ])
+        smoothed = np.array(
+            [
+                compute_running_mean(metric_array[seed_idx], window_size)
+                for seed_idx in range(metric_array.shape[0])
+            ]
+        )
 
         mean, ci_lower, ci_upper = compute_timeseries_statistics(smoothed)
 

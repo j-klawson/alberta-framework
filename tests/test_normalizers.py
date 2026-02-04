@@ -4,7 +4,7 @@ import chex
 import jax.numpy as jnp
 import pytest
 
-from alberta_framework import OnlineNormalizer, NormalizerState, create_normalizer_state
+from alberta_framework import NormalizerState, OnlineNormalizer, create_normalizer_state
 
 
 class TestOnlineNormalizer:
