@@ -5,9 +5,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from alberta_framework import (
+    BatchedMLPResult,
     MLPLearner,
     RandomWalkStream,
     run_mlp_learning_loop,
+    run_mlp_learning_loop_batched,
 )
 
 
@@ -182,3 +184,82 @@ class TestRunMLPLearningLoop:
 
         chex.assert_shape(metrics, (50, 3))
         chex.assert_tree_all_finite(metrics)
+
+
+class TestBatchedMLPLearningLoop:
+    """Tests for the run_mlp_learning_loop_batched function."""
+
+    def test_batched_returns_correct_shapes(self):
+        """Batched loop should return metrics with shape (num_seeds, num_steps, 3)."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        num_seeds = 4
+        num_steps = 50
+
+        keys = jr.split(jr.key(42), num_seeds)
+        result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=num_steps, keys=keys
+        )
+
+        assert isinstance(result, BatchedMLPResult)
+        chex.assert_shape(result.metrics, (num_seeds, num_steps, 3))
+        chex.assert_tree_all_finite(result.metrics)
+
+        # Check batched param shapes
+        chex.assert_shape(result.states.params.weights[0], (num_seeds, 16, 5))
+        chex.assert_shape(result.states.params.weights[1], (num_seeds, 1, 16))
+        chex.assert_shape(result.states.params.biases[0], (num_seeds, 16))
+        chex.assert_shape(result.states.params.biases[1], (num_seeds, 1))
+
+    def test_batched_matches_sequential(self):
+        """Batched results should match sequential results for each seed."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        num_seeds = 3
+        num_steps = 50
+
+        keys = jr.split(jr.key(42), num_seeds)
+
+        # Run batched
+        batched_result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=num_steps, keys=keys
+        )
+
+        # Run sequential
+        for i in range(num_seeds):
+            state_i, metrics_i = run_mlp_learning_loop(
+                learner, stream, num_steps=num_steps, key=keys[i]
+            )
+            chex.assert_trees_all_close(
+                batched_result.metrics[i], metrics_i, rtol=1e-4
+            )
+
+    def test_batched_deterministic(self):
+        """Same keys should produce identical batched results."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+
+        keys = jr.split(jr.key(42), 3)
+
+        result1 = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=50, keys=keys
+        )
+        result2 = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=50, keys=keys
+        )
+
+        chex.assert_trees_all_close(result1.metrics, result2.metrics)
+
+    def test_batched_different_keys_different_results(self):
+        """Different seeds should produce different metrics."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+
+        keys = jr.split(jr.key(42), 3)
+        result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=50, keys=keys
+        )
+
+        # Different seeds should give different final metrics
+        assert not jnp.allclose(result.metrics[0], result.metrics[1])
+        assert not jnp.allclose(result.metrics[0], result.metrics[2])

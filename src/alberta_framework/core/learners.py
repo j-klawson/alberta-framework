@@ -20,6 +20,7 @@ from alberta_framework.core.types import (
     AutostepState,
     AutoTDIDBDState,
     BatchedLearningResult,
+    BatchedMLPResult,
     BatchedNormalizedResult,
     IDBDState,
     LearnerState,
@@ -1387,6 +1388,62 @@ def run_mlp_learning_loop[StreamStateT](
     )
 
     return final_learner, metrics
+
+
+def run_mlp_learning_loop_batched[StreamStateT](
+    learner: MLPLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    keys: Array,
+    learner_state: MLPLearnerState | None = None,
+) -> BatchedMLPResult:
+    """Run MLP learning loop across multiple seeds in parallel using jax.vmap.
+
+    This function provides GPU parallelization for multi-seed MLP experiments,
+    typically achieving 2-5x speedup over sequential execution.
+
+    Args:
+        learner: The MLP learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run per seed
+        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        learner_state: Initial state (if None, will be initialized from stream).
+            The same initial state is used for all seeds.
+
+    Returns:
+        BatchedMLPResult containing:
+            - states: Batched final states with shape (num_seeds, ...) for each array
+            - metrics: Array of shape (num_seeds, num_steps, 3)
+
+    Examples:
+    ```python
+    import jax.random as jr
+    from alberta_framework import MLPLearner, RandomWalkStream
+    from alberta_framework import run_mlp_learning_loop_batched
+
+    stream = RandomWalkStream(feature_dim=10)
+    learner = MLPLearner(hidden_sizes=(128, 128))
+
+    # Run 30 seeds in parallel
+    keys = jr.split(jr.key(42), 30)
+    result = run_mlp_learning_loop_batched(learner, stream, num_steps=10000, keys=keys)
+
+    # result.metrics has shape (30, 10000, 3)
+    mean_error = result.metrics[:, :, 0].mean(axis=0)  # Average over seeds
+    ```
+    """
+
+    def single_seed_run(key: Array) -> tuple[MLPLearnerState, Array]:
+        return run_mlp_learning_loop(
+            learner, stream, num_steps, key, learner_state
+        )
+
+    batched_states, batched_metrics = jax.vmap(single_seed_run)(keys)
+
+    return BatchedMLPResult(
+        states=batched_states,
+        metrics=batched_metrics,
+    )
 
 
 # =============================================================================

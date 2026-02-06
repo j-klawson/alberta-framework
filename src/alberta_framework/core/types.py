@@ -343,6 +343,22 @@ class MLPLearnerState:
     optimizer_state: MLPObGDState
 
 
+@chex.dataclass(frozen=True)
+class BatchedMLPResult:
+    """Result from batched MLP learning loop across multiple seeds.
+
+    Used with `run_mlp_learning_loop_batched` for vmap-based GPU parallelization.
+
+    Attributes:
+        states: Batched MLP learner states - each array has shape (num_seeds, ...)
+        metrics: Metrics array with shape (num_seeds, num_steps, 3)
+            where columns are [squared_error, error, effective_step_size]
+    """
+
+    states: MLPLearnerState  # Batched: each array has shape (num_seeds, ...)
+    metrics: Float[Array, "num_seeds num_steps 3"]
+
+
 # =============================================================================
 # TD Learning Types (for Step 3+ of Alberta Plan)
 # =============================================================================

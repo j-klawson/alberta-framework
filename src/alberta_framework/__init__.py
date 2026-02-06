@@ -59,6 +59,7 @@ from alberta_framework.core.learners import (
     run_learning_loop,
     run_learning_loop_batched,
     run_mlp_learning_loop,
+    run_mlp_learning_loop_batched,
     run_normalized_learning_loop,
     run_normalized_learning_loop_batched,
     run_td_learning_loop,
@@ -87,6 +88,7 @@ from alberta_framework.core.types import (
     AutostepState,
     AutoTDIDBDState,
     BatchedLearningResult,
+    BatchedMLPResult,
     BatchedNormalizedResult,
     IDBDState,
     LearnerState,
@@ -189,6 +191,7 @@ __all__ = [
     "TimeStep",
     "UpdateResult",
     # Types - MLP
+    "BatchedMLPResult",
     "MLPLearnerState",
     "MLPObGDState",
     "MLPParams",
@@ -230,6 +233,7 @@ __all__ = [
     # Learners - MLP
     "MLPLearner",
     "run_mlp_learning_loop",
+    "run_mlp_learning_loop_batched",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",
