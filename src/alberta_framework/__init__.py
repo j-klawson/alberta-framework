@@ -10,7 +10,7 @@ Roadmap
 | Step | Focus | Status |
 |------|-------|--------|
 | 1 | Meta-learned step-sizes (IDBD, Autostep) | **Complete** |
-| 2 | Feature generation and testing | Planned |
+| 2 | Nonlinear function approximation (MLP, ObGD) | **In Progress** |
 | 3 | GVF predictions, Horde architecture | Planned |
 | 4 | Actor-critic with eligibility traces | Planned |
 | 5-6 | Off-policy learning, average reward | Planned |
@@ -37,14 +37,19 @@ References
 - The Alberta Plan for AI Research (Sutton et al., 2022): https://arxiv.org/abs/2208.11173
 - Adapting Bias by Gradient Descent (Sutton, 1992)
 - Tuning-free Step-size Adaptation (Mahmood et al., 2012)
+- Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Core types
 # Learners
+# Initializers
+from alberta_framework.core.initializers import sparse_init
 from alberta_framework.core.learners import (
     LinearLearner,
+    MLPLearner,
+    MLPUpdateResult,
     NormalizedLearnerState,
     NormalizedLinearLearner,
     TDLinearLearner,
@@ -53,6 +58,7 @@ from alberta_framework.core.learners import (
     metrics_to_dicts,
     run_learning_loop,
     run_learning_loop_batched,
+    run_mlp_learning_loop,
     run_normalized_learning_loop,
     run_normalized_learning_loop_batched,
     run_td_learning_loop,
@@ -72,6 +78,7 @@ from alberta_framework.core.optimizers import (
     TDIDBD,
     Autostep,
     AutoTDIDBD,
+    ObGD,
     Optimizer,
     TDOptimizer,
     TDOptimizerUpdate,
@@ -84,8 +91,12 @@ from alberta_framework.core.types import (
     IDBDState,
     LearnerState,
     LMSState,
+    MLPLearnerState,
+    MLPObGDState,
+    MLPParams,
     NormalizerHistory,
     NormalizerTrackingConfig,
+    ObGDState,
     Observation,
     Prediction,
     StepSizeHistory,
@@ -96,6 +107,7 @@ from alberta_framework.core.types import (
     TDTimeStep,
     TimeStep,
     create_autotdidbd_state,
+    create_obgd_state,
     create_tdidbd_state,
 )
 
@@ -168,6 +180,7 @@ __all__ = [
     "NormalizerHistory",
     "NormalizerState",
     "NormalizerTrackingConfig",
+    "ObGDState",
     "Observation",
     "Prediction",
     "StepSizeHistory",
@@ -175,24 +188,33 @@ __all__ = [
     "Target",
     "TimeStep",
     "UpdateResult",
+    # Types - MLP
+    "MLPLearnerState",
+    "MLPObGDState",
+    "MLPParams",
+    "MLPUpdateResult",
     # Types - TD Learning
     "AutoTDIDBDState",
     "TDIDBDState",
     "TDLearnerState",
     "TDTimeStep",
     "TDUpdateResult",
+    "create_obgd_state",
     "create_tdidbd_state",
     "create_autotdidbd_state",
     # Optimizers - Supervised Learning
     "Autostep",
     "IDBD",
     "LMS",
+    "ObGD",
     "Optimizer",
     # Optimizers - TD Learning
     "AutoTDIDBD",
     "TDIDBD",
     "TDOptimizer",
     "TDOptimizerUpdate",
+    # Initializers
+    "sparse_init",
     # Normalizers
     "OnlineNormalizer",
     "create_normalizer_state",
@@ -205,6 +227,9 @@ __all__ = [
     "run_normalized_learning_loop",
     "run_normalized_learning_loop_batched",
     "metrics_to_dicts",
+    # Learners - MLP
+    "MLPLearner",
+    "run_mlp_learning_loop",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",

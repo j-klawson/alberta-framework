@@ -1,10 +1,10 @@
-"""Tests for LMS, IDBD, and Autostep optimizers."""
+"""Tests for LMS, IDBD, Autostep, and ObGD optimizers."""
 
 import chex
 import jax.numpy as jnp
 import pytest
 
-from alberta_framework import IDBD, LMS, Autostep
+from alberta_framework import IDBD, LMS, Autostep, ObGD
 
 
 class TestLMS:
@@ -189,6 +189,115 @@ class TestAutostep:
         assert "mean_normalizer" in result.metrics
 
 
+class TestObGD:
+    """Tests for the ObGD optimizer."""
+
+    def test_init_creates_correct_state(self):
+        """ObGD init should create state with traces and parameters."""
+        optimizer = ObGD(step_size=1.0, kappa=2.0)
+        state = optimizer.init(feature_dim=10)
+
+        chex.assert_shape(state.traces, (10,))
+        chex.assert_trees_all_close(state.traces, jnp.zeros(10))
+        assert state.step_size == pytest.approx(1.0)
+        assert state.kappa == pytest.approx(2.0)
+        assert state.gamma == pytest.approx(0.0)
+        assert state.lamda == pytest.approx(0.0)
+
+    def test_update_returns_correct_shapes(self, sample_observation):
+        """ObGD update should return correctly shaped deltas."""
+        optimizer = ObGD()
+        state = optimizer.init(feature_dim=len(sample_observation))
+
+        error = jnp.array(1.0)
+        result = optimizer.update(state, error, sample_observation)
+
+        chex.assert_shape(result.weight_delta, sample_observation.shape)
+        chex.assert_shape(result.new_state.traces, sample_observation.shape)
+
+    def test_no_trace_mode_matches_lms_when_unbounded(self):
+        """With gamma=0, small error, and kappa=0, ObGD should match LMS."""
+        feature_dim = 5
+        step_size = 0.1
+        # kappa=0 means bounding never activates (dot_product = 0 < 1)
+        obgd = ObGD(step_size=step_size, kappa=0.0)
+        lms = LMS(step_size=step_size)
+
+        obgd_state = obgd.init(feature_dim)
+        lms_state = lms.init(feature_dim)
+
+        observation = jnp.ones(feature_dim) * 0.5
+        error = jnp.array(0.5)
+
+        obgd_result = obgd.update(obgd_state, error, observation)
+        lms_result = lms.update(lms_state, error, observation)
+
+        chex.assert_trees_all_close(obgd_result.weight_delta, lms_result.weight_delta, atol=1e-6)
+
+    def test_bounding_activates_with_large_errors(self):
+        """Bounding should reduce effective step-size with large errors."""
+        optimizer = ObGD(step_size=1.0, kappa=2.0)
+        feature_dim = 5
+        state = optimizer.init(feature_dim)
+
+        observation = jnp.ones(feature_dim)
+
+        # Small error - may not trigger bounding
+        small_error = jnp.array(0.01)
+        small_result = optimizer.update(state, small_error, observation)
+        small_eff = small_result.metrics["effective_step_size"]
+
+        # Large error - should trigger bounding
+        large_error = jnp.array(100.0)
+        large_result = optimizer.update(state, large_error, observation)
+        large_eff = large_result.metrics["effective_step_size"]
+
+        # Effective step-size should be smaller for large errors
+        assert float(large_eff) < float(small_eff)
+
+    def test_traces_accumulate_with_nonzero_gamma_lamda(self):
+        """Traces should accumulate over steps with nonzero gamma and lamda."""
+        optimizer = ObGD(step_size=1.0, kappa=2.0, gamma=0.9, lamda=0.8)
+        feature_dim = 3
+        state = optimizer.init(feature_dim)
+
+        observation = jnp.array([1.0, 2.0, 3.0])
+        error = jnp.array(1.0)
+
+        # First update: traces = 0*0.72 + obs = obs
+        result1 = optimizer.update(state, error, observation)
+        chex.assert_trees_all_close(result1.new_state.traces, observation)
+
+        # Second update: traces = 0.72*obs + obs = 1.72*obs
+        result2 = optimizer.update(result1.new_state, error, observation)
+        expected = 0.9 * 0.8 * observation + observation
+        chex.assert_trees_all_close(result2.new_state.traces, expected, atol=1e-6)
+
+    def test_effective_step_size_never_exceeds_base(self):
+        """Effective step-size should never exceed the base step-size."""
+        optimizer = ObGD(step_size=0.5, kappa=2.0)
+        feature_dim = 10
+        state = optimizer.init(feature_dim)
+
+        observation = jnp.ones(feature_dim) * 0.1
+        error = jnp.array(5.0)
+
+        result = optimizer.update(state, error, observation)
+        eff = result.metrics["effective_step_size"]
+        assert float(eff) <= 0.5 + 1e-7
+
+    def test_produces_finite_updates(self, sample_observation):
+        """ObGD should produce finite updates."""
+        optimizer = ObGD()
+        state = optimizer.init(feature_dim=len(sample_observation))
+
+        error = jnp.array(1.0)
+        result = optimizer.update(state, error, sample_observation)
+
+        chex.assert_tree_all_finite(result.weight_delta)
+        chex.assert_tree_all_finite(result.bias_delta)
+
+
 class TestOptimizerComparison:
     """Integration tests comparing LMS, IDBD, and Autostep behavior."""
 
@@ -197,23 +306,28 @@ class TestOptimizerComparison:
         lms = LMS(step_size=0.01)
         idbd = IDBD(initial_step_size=0.01)
         autostep = Autostep(initial_step_size=0.01)
+        obgd = ObGD(step_size=0.01)
 
         lms_state = lms.init(len(sample_observation))
         idbd_state = idbd.init(len(sample_observation))
         autostep_state = autostep.init(len(sample_observation))
+        obgd_state = obgd.init(len(sample_observation))
 
         error = jnp.array(1.0)
 
         lms_result = lms.update(lms_state, error, sample_observation)
         idbd_result = idbd.update(idbd_state, error, sample_observation)
         autostep_result = autostep.update(autostep_state, error, sample_observation)
+        obgd_result = obgd.update(obgd_state, error, sample_observation)
 
         # All should produce finite updates
         chex.assert_tree_all_finite(lms_result.weight_delta)
         chex.assert_tree_all_finite(idbd_result.weight_delta)
         chex.assert_tree_all_finite(autostep_result.weight_delta)
+        chex.assert_tree_all_finite(obgd_result.weight_delta)
 
         # All should produce non-zero updates for non-zero error
         assert jnp.any(lms_result.weight_delta != 0)
         assert jnp.any(idbd_result.weight_delta != 0)
         assert jnp.any(autostep_result.weight_delta != 0)
+        assert jnp.any(obgd_result.weight_delta != 0)

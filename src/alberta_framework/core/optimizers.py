@@ -21,6 +21,7 @@ from alberta_framework.core.types import (
     AutoTDIDBDState,
     IDBDState,
     LMSState,
+    ObGDState,
     TDIDBDState,
 )
 
@@ -38,11 +39,11 @@ class OptimizerUpdate:
 
     weight_delta: Float[Array, " feature_dim"]
     bias_delta: Float[Array, ""]
-    new_state: LMSState | IDBDState | AutostepState
+    new_state: LMSState | IDBDState | AutostepState | ObGDState
     metrics: dict[str, Array]
 
 
-class Optimizer[StateT: (LMSState, IDBDState, AutostepState)](ABC):
+class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState)](ABC):
     """Base class for optimizers."""
 
     @abstractmethod
@@ -428,6 +429,140 @@ class Autostep(Optimizer[AutostepState]):
                 "min_step_size": jnp.min(state.step_sizes),
                 "max_step_size": jnp.max(state.step_sizes),
                 "mean_normalizer": jnp.mean(state.normalizers),
+            },
+        )
+
+
+class ObGD(Optimizer[ObGDState]):
+    """Observation-bounded Gradient Descent optimizer.
+
+    ObGD prevents overshooting by dynamically bounding the effective step-size
+    based on the magnitude of the prediction error and eligibility traces.
+    When the combined update magnitude would be too large, the step-size is
+    scaled down to prevent the prediction from overshooting the target.
+
+    This is the deep-network generalization of Autostep's overshooting
+    prevention, designed for streaming reinforcement learning.
+
+    For supervised learning (gamma=0, lamda=0), traces equal the current
+    observation each step, making ObGD equivalent to LMS with dynamic
+    step-size bounding.
+
+    The ObGD algorithm:
+
+    1. Update traces: `z = gamma * lamda * z + observation`
+    2. Compute bound: `M = alpha * kappa * max(|error|, 1) * (||z_w||_1 + |z_b|)`
+    3. Effective step: `alpha_eff = min(alpha, alpha / M)` (i.e. `alpha / max(M, 1)`)
+    4. Weight delta: `delta_w = alpha_eff * error * z_w`
+    5. Bias delta: `delta_b = alpha_eff * error * z_b`
+
+    Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning
+    Finally Works"
+
+    Attributes:
+        step_size: Base learning rate alpha
+        kappa: Bounding sensitivity parameter (higher = more conservative)
+        gamma: Discount factor for trace decay (0 for supervised learning)
+        lamda: Eligibility trace decay parameter (0 for supervised learning)
+    """
+
+    def __init__(
+        self,
+        step_size: float = 1.0,
+        kappa: float = 2.0,
+        gamma: float = 0.0,
+        lamda: float = 0.0,
+    ):
+        """Initialize ObGD optimizer.
+
+        Args:
+            step_size: Base learning rate (default: 1.0)
+            kappa: Bounding sensitivity parameter (default: 2.0)
+            gamma: Discount factor for trace decay (default: 0.0 for supervised)
+            lamda: Eligibility trace decay parameter (default: 0.0 for supervised)
+        """
+        self._step_size = step_size
+        self._kappa = kappa
+        self._gamma = gamma
+        self._lamda = lamda
+
+    def init(self, feature_dim: int) -> ObGDState:
+        """Initialize ObGD state.
+
+        Args:
+            feature_dim: Dimension of weight vector
+
+        Returns:
+            ObGD state with eligibility traces
+        """
+        return ObGDState(
+            step_size=jnp.array(self._step_size, dtype=jnp.float32),
+            kappa=jnp.array(self._kappa, dtype=jnp.float32),
+            traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+            bias_trace=jnp.array(0.0, dtype=jnp.float32),
+            gamma=jnp.array(self._gamma, dtype=jnp.float32),
+            lamda=jnp.array(self._lamda, dtype=jnp.float32),
+        )
+
+    def update(
+        self,
+        state: ObGDState,
+        error: Array,
+        observation: Array,
+    ) -> OptimizerUpdate:
+        """Compute ObGD weight update with overshooting prevention.
+
+        The bounding mechanism scales down the step-size when the combined
+        effect of error magnitude, trace norm, and step-size would cause
+        the prediction to overshoot the target.
+
+        Args:
+            state: Current ObGD state
+            error: Prediction error (target - prediction)
+            observation: Current observation/feature vector
+
+        Returns:
+            OptimizerUpdate with bounded weight deltas and updated state
+        """
+        error_scalar = jnp.squeeze(error)
+        alpha = state.step_size
+        kappa = state.kappa
+
+        # Update eligibility traces: z = gamma * lamda * z + observation
+        new_traces = state.gamma * state.lamda * state.traces + observation
+        new_bias_trace = state.gamma * state.lamda * state.bias_trace + 1.0
+
+        # Compute z_sum (L1 norm of all traces)
+        z_sum = jnp.sum(jnp.abs(new_traces)) + jnp.abs(new_bias_trace)
+
+        # Compute bounding factor: M = alpha * kappa * max(|error|, 1) * z_sum
+        delta_bar = jnp.maximum(jnp.abs(error_scalar), 1.0)
+        dot_product = delta_bar * z_sum * alpha * kappa
+
+        # Effective step-size: alpha / max(M, 1)
+        alpha_eff = alpha / jnp.maximum(dot_product, 1.0)
+
+        # Weight and bias deltas
+        weight_delta = alpha_eff * error_scalar * new_traces
+        bias_delta = alpha_eff * error_scalar * new_bias_trace
+
+        new_state = ObGDState(
+            step_size=alpha,
+            kappa=kappa,
+            traces=new_traces,
+            bias_trace=new_bias_trace,
+            gamma=state.gamma,
+            lamda=state.lamda,
+        )
+
+        return OptimizerUpdate(
+            weight_delta=weight_delta,
+            bias_delta=bias_delta,
+            new_state=new_state,
+            metrics={
+                "step_size": alpha,
+                "effective_step_size": alpha_eff,
+                "bounding_factor": dot_product,
             },
         )
 

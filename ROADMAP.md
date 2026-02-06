@@ -1,13 +1,80 @@
-To build a 10-year framework for the Alberta Plan, your architecture must move away from the "static model" paradigm of modern deep learning and embrace the "massive retreat" into online, continual, and meta-learning.I. The "Alberta Framework" ArchitectureThe core philosophy of this framework is Temporal Uniformity: every component must be able to update and provide an output at every single time step without batching or offline phases.Core Software Components (Python/JAX)Experience Stream (ExperienceStream): A standardized interface that wraps diverse "Big World" signals (e.g., your SSH logs, sensor telemetry, or game state) into a continuous sequence of observations ($x_t$) and rewards ($r_t$).Learning Unit (LearningUnit): The fundamental "brick." Each unit should represent a single prediction or control task. It must be linear-by-default to satisfy Step 1.Meta-Optimizer (MetaOptimizer): A decoupled module that manages step-sizes. This is where LMS (fixed $\alpha$) and IDBD (learned $\beta$) reside.Horde Layer (Horde): A collection of many learning units (Generalized Value Functions or GVFs) that learn in parallel about different sub-signals of the stream.FC-STOMP progression (AbstractionEngine): A specialized module to handle the five-step progression from Feature Construction to Planning.II. The 10-Year Roadmap (Step-by-Step)This roadmap follows the 12-stage "retreat and return" strategy.Phase 1: Foundation (Steps 1–3)Step 1: Representation I (Continual Supervised Learning): Implement the framework with a fixed feature vector and compare LMS vs. IDBD. The goal is to prove the meta-learner can track non-stationary targets better than a human-tuned rate.Step 2: Representation II (Supervised Feature Finding): Add "generate and test" mechanisms to discover new features (e.g., non-linear combinations of SSH signals) online.Step 3: Prediction I (Continual GVF Learning): Move from predicting just reward to predicting "anything" (e.g., "Will the next command be sudo?").Phase 2: Interaction (Steps 4–7)Step 4: Control I (Continual Actor-Critic): Introduce an action-selection policy. The agent now manages the SSH session (e.g., deciding to tarpit).Step 5 & 6: Continuing Control: Transition to Average Reward objectives, which are more natural for long-lived agents than discounted returns.Phase 3: Intelligence (Steps 8–12)Step 8: Planning I: Implement a transition model that can predict future states.Step 10: STOMP Progression: Automate the creation of Subtasks and Options based on learned features.Step 11: OaK (The Proto-AI): Integrate all components into a single, cohesive architecture where every weight has its own meta-learned step-size.
+# Alberta Framework Roadmap
 
+Building the foundations of Continual AI, one step at a time.
 
+The Alberta Framework follows the 12-step "retreat and return" strategy from the Alberta Plan for AI Research (Sutton et al., 2022). Each step builds on the previous, starting from the simplest possible setting and incrementally adding complexity.
 
-alberta-framework/
-├── core/                # JAX-based TD(λ) and IDBD implementations
-├── envs/                # Experience streams (SSH, Quake, etc.)
-├── steps/               # Sub-packages for each Alberta Plan step
-│   ├── step_1_rep/      # Linear supervised + IDBD
-│   ├── step_3_gvf/      # Horde of GVFs
-│   └── step_11_oak/     # Integrated STOMP/OaK
-├── contrib/             # Community-solved modules
-└── docs/                # Academic citations and 10-year vision
+## Step 1: Meta-Learned Step-Sizes — Complete (v0.1.0–v0.4.0)
+
+**Goal**: Demonstrate that IDBD and Autostep with meta-learned step-sizes can match or beat hand-tuned LMS on non-stationary supervised learning problems.
+
+**Delivered**:
+- LMS, IDBD (Sutton 1992), Autostep (Mahmood et al. 2012) optimizers
+- Linear learners with pluggable optimizers
+- Online feature normalization
+- JIT-compiled scan-based learning loops with `jax.lax.scan`
+- Batched multi-seed experiments via `jax.vmap`
+- Step-size and normalizer tracking for meta-adaptation analysis
+- TD-IDBD and AutoTDIDBD for temporal-difference learning (Kearney et al. 2019)
+- Publication-quality experiment infrastructure (statistics, visualization, export)
+
+## Step 2: Nonlinear Function Approximation — In Progress (v0.5.0)
+
+**Goal**: Extend from linear to nonlinear function approximation while maintaining streaming, single-step updates. Demonstrate that ObGD's overshooting prevention enables stable MLP learning in the continual setting.
+
+**Delivered (v0.5.0)**:
+- ObGD optimizer (Elsayed et al. 2024) with dynamic step-size bounding
+- MLPLearner with parameterless LayerNorm, LeakyReLU, sparse initialization
+- `run_mlp_learning_loop` for JIT-compiled MLP training
+
+**Planned**:
+- Feature generation and testing ("generate and test" mechanisms)
+- Nonlinear feature discovery for streaming problems
+- Comparison studies across diverse non-stationarity types
+
+## Step 3: Prediction — Planned
+
+**Goal**: Move from supervised prediction to General Value Function (GVF) predictions. Learn to predict "anything" as a cumulant signal.
+
+**Key components**:
+- Stream TD(lambda) with linear and nonlinear function approximation
+- GVF specification (cumulant, discount, policy)
+- Horde architecture: many GVFs learning in parallel
+- Integration with ObGD and MLP learners
+
+## Step 4: Control — Planned
+
+**Goal**: Introduce action selection. Move from prediction-only agents to actor-critic control.
+
+**Key components**:
+- Stream AC(lambda): Actor-critic with eligibility traces
+- Policy gradient with ObGD-style overshooting prevention
+- Continuous and discrete action spaces
+- Gymnasium integration for control benchmarks
+
+## Steps 5–6: Continuing Control — Future
+
+**Goal**: Transition from episodic to continuing (average-reward) formulations, which are more natural for long-lived agents.
+
+**Key components**:
+- Average reward TD learning
+- Differential value functions
+- Continuing actor-critic methods
+
+## Steps 7–12: Intelligence — Future
+
+**Goal**: Integrate all components into a cohesive architecture.
+
+- Planning with learned transition models
+- Subtask and option discovery (STOMP progression)
+- Hierarchical architectures
+- Multi-agent coordination
+- OaK: the integrated proto-AI agent
+
+## References
+
+- Sutton, R.S. (1992). "Adapting Bias by Gradient Descent: An Incremental Version of Delta-Bar-Delta"
+- Mahmood, A.R., Sutton, R.S., Degris, T., & Pilarski, P.M. (2012). "Tuning-free Step-size Adaptation"
+- Kearney, A., Veeriah, V., Travnik, J., Pilarski, P.M., & Sutton, R.S. (2019). "Learning Feature Relevance Through Step Size Adaptation in Temporal-Difference Learning"
+- Sutton, R.S., et al. (2022). "The Alberta Plan for AI Research"
+- Elsayed, M., Lan, Q., Lyle, C., & Mahmood, A.R. (2024). "Streaming Deep Reinforcement Learning Finally Works"

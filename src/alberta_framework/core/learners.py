@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import Float
 
+from alberta_framework.core.initializers import sparse_init
 from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
 from alberta_framework.core.optimizers import LMS, TDIDBD, Optimizer, TDOptimizer
 from alberta_framework.core.types import (
@@ -23,8 +24,12 @@ from alberta_framework.core.types import (
     IDBDState,
     LearnerState,
     LMSState,
+    MLPLearnerState,
+    MLPObGDState,
+    MLPParams,
     NormalizerHistory,
     NormalizerTrackingConfig,
+    ObGDState,
     Observation,
     Prediction,
     StepSizeHistory,
@@ -40,7 +45,9 @@ from alberta_framework.streams.base import ScanStream
 StateT = TypeVar("StateT")
 
 # Type alias for any optimizer type
-AnyOptimizer = Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState]
+AnyOptimizer = (
+    Optimizer[LMSState] | Optimizer[IDBDState] | Optimizer[AutostepState] | Optimizer[ObGDState]
+)
 
 # Type alias for any TD optimizer type
 AnyTDOptimizer = TDOptimizer[TDIDBDState] | TDOptimizer[AutoTDIDBDState]
@@ -1067,6 +1074,316 @@ def metrics_to_dicts(metrics: Array, normalized: bool = False) -> list[dict[str,
             d["normalizer_mean_var"] = float(row[3])
         result.append(d)
     return result
+
+
+# =============================================================================
+# MLP Learner (Step 2 of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class MLPUpdateResult:
+    """Result of an MLP learner update step.
+
+    Attributes:
+        state: Updated MLP learner state
+        prediction: Prediction made before update
+        error: Prediction error
+        metrics: Array of metrics [squared_error, error, effective_step_size]
+    """
+
+    state: MLPLearnerState
+    prediction: Prediction
+    error: Float[Array, ""]
+    metrics: Float[Array, " 3"]
+
+
+class MLPLearner:
+    """Multi-layer perceptron with ObGD optimizer for streaming learning.
+
+    Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)`
+
+    Uses parameterless layer normalization and sparse initialization following
+    Elsayed et al. 2024. The ObGD optimizer prevents overshooting by dynamically
+    bounding the effective step-size.
+
+    Internal gradient computation uses `jax.grad` on a pure forward function.
+    ObGD bounding is applied globally across all parameter traces.
+
+    Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning
+    Finally Works"
+
+    Attributes:
+        hidden_sizes: Tuple of hidden layer sizes
+        step_size: Base learning rate for ObGD
+        kappa: Bounding sensitivity for ObGD
+        gamma: Discount factor for trace decay
+        lamda: Eligibility trace decay parameter
+        sparsity: Fraction of weights zeroed out per output neuron
+        leaky_relu_slope: Negative slope for LeakyReLU activation
+    """
+
+    def __init__(
+        self,
+        hidden_sizes: tuple[int, ...] = (128, 128),
+        step_size: float = 1.0,
+        kappa: float = 2.0,
+        gamma: float = 0.0,
+        lamda: float = 0.0,
+        sparsity: float = 0.9,
+        leaky_relu_slope: float = 0.01,
+    ):
+        """Initialize MLP learner.
+
+        Args:
+            hidden_sizes: Tuple of hidden layer sizes (default: two layers of 128)
+            step_size: Base learning rate for ObGD (default: 1.0)
+            kappa: Bounding sensitivity for ObGD (default: 2.0)
+            gamma: Discount factor for trace decay (default: 0.0 for supervised)
+            lamda: Eligibility trace decay parameter (default: 0.0 for supervised)
+            sparsity: Fraction of weights zeroed out per output neuron (default: 0.9)
+            leaky_relu_slope: Negative slope for LeakyReLU (default: 0.01)
+        """
+        self._hidden_sizes = hidden_sizes
+        self._step_size = step_size
+        self._kappa = kappa
+        self._gamma = gamma
+        self._lamda = lamda
+        self._sparsity = sparsity
+        self._leaky_relu_slope = leaky_relu_slope
+
+    def init(self, feature_dim: int, key: Array) -> MLPLearnerState:
+        """Initialize MLP learner state with sparse weights.
+
+        Args:
+            feature_dim: Dimension of the input feature vector
+            key: JAX random key for weight initialization
+
+        Returns:
+            Initial MLP learner state with sparse weights and zero biases
+        """
+        # Build layer sizes: [feature_dim, hidden1, hidden2, ..., 1]
+        layer_sizes = [feature_dim, *self._hidden_sizes, 1]
+
+        weights_list = []
+        biases_list = []
+        weight_traces_list = []
+        bias_traces_list = []
+
+        for i in range(len(layer_sizes) - 1):
+            fan_out = layer_sizes[i + 1]
+            fan_in = layer_sizes[i]
+            key, subkey = jax.random.split(key)
+            w = sparse_init(subkey, (fan_out, fan_in), sparsity=self._sparsity)
+            b = jnp.zeros(fan_out, dtype=jnp.float32)
+            weights_list.append(w)
+            biases_list.append(b)
+            weight_traces_list.append(jnp.zeros_like(w))
+            bias_traces_list.append(jnp.zeros_like(b))
+
+        params = MLPParams(
+            weights=tuple(weights_list),
+            biases=tuple(biases_list),
+        )
+
+        optimizer_state = MLPObGDState(
+            step_size=jnp.array(self._step_size, dtype=jnp.float32),
+            kappa=jnp.array(self._kappa, dtype=jnp.float32),
+            weight_traces=tuple(weight_traces_list),
+            bias_traces=tuple(bias_traces_list),
+            gamma=jnp.array(self._gamma, dtype=jnp.float32),
+            lamda=jnp.array(self._lamda, dtype=jnp.float32),
+        )
+
+        return MLPLearnerState(params=params, optimizer_state=optimizer_state)
+
+    @staticmethod
+    def _forward(
+        weights: tuple[Array, ...],
+        biases: tuple[Array, ...],
+        observation: Array,
+        leaky_relu_slope: float,
+    ) -> Array:
+        """Pure forward pass for use with jax.grad.
+
+        Args:
+            weights: Tuple of weight matrices
+            biases: Tuple of bias vectors
+            observation: Input feature vector
+            leaky_relu_slope: Negative slope for LeakyReLU
+
+        Returns:
+            Scalar prediction
+        """
+        x = observation
+        num_layers = len(weights)
+        for i in range(num_layers - 1):
+            x = weights[i] @ x + biases[i]
+            # Parameterless layer normalization
+            mean = jnp.mean(x)
+            var = jnp.var(x)
+            x = (x - mean) / jnp.sqrt(var + 1e-5)
+            # LeakyReLU
+            x = jnp.where(x >= 0, x, leaky_relu_slope * x)
+        # Output layer (no activation)
+        x = weights[-1] @ x + biases[-1]
+        return jnp.squeeze(x)
+
+    def predict(self, state: MLPLearnerState, observation: Observation) -> Prediction:
+        """Compute prediction for an observation.
+
+        Args:
+            state: Current MLP learner state
+            observation: Input feature vector
+
+        Returns:
+            Scalar prediction
+        """
+        y = self._forward(
+            state.params.weights,
+            state.params.biases,
+            observation,
+            self._leaky_relu_slope,
+        )
+        return jnp.atleast_1d(y)
+
+    def update(
+        self,
+        state: MLPLearnerState,
+        observation: Observation,
+        target: Target,
+    ) -> MLPUpdateResult:
+        """Update MLP given observation and target.
+
+        Performs one step of the learning algorithm:
+        1. Compute prediction and error
+        2. Compute gradients via jax.grad on the forward pass
+        3. Update eligibility traces
+        4. Apply ObGD bounding across all parameters
+        5. Apply bounded weight updates
+
+        Args:
+            state: Current MLP learner state
+            observation: Input feature vector
+            target: Desired output
+
+        Returns:
+            MLPUpdateResult with new state, prediction, error, and metrics
+        """
+        target_scalar = jnp.squeeze(target)
+        opt = state.optimizer_state
+
+        # Forward pass for prediction
+        prediction = self.predict(state, observation)
+        error = target_scalar - jnp.squeeze(prediction)
+
+        # Compute gradients w.r.t. prediction (for ObGD: grad of prediction w.r.t. params)
+        # We need -grad(prediction) because ObGD uses: w += alpha_eff * error * z
+        # and z accumulates gradients of the prediction
+        slope = self._leaky_relu_slope
+
+        def pred_fn(weights: tuple[Array, ...], biases: tuple[Array, ...]) -> Array:
+            return self._forward(weights, biases, observation, slope)
+
+        weight_grads, bias_grads = jax.grad(pred_fn, argnums=(0, 1))(
+            state.params.weights, state.params.biases
+        )
+
+        # Update eligibility traces: z = gamma * lamda * z + grad
+        gamma_lamda = opt.gamma * opt.lamda
+        new_weight_traces = tuple(
+            gamma_lamda * zt + gt for zt, gt in zip(opt.weight_traces, weight_grads)
+        )
+        new_bias_traces = tuple(
+            gamma_lamda * zt + gt for zt, gt in zip(opt.bias_traces, bias_grads)
+        )
+
+        # Compute global z_sum (L1 norm across all traces)
+        z_sum = sum(jnp.sum(jnp.abs(zt)) for zt in new_weight_traces)
+        z_sum = z_sum + sum(jnp.sum(jnp.abs(zt)) for zt in new_bias_traces)
+
+        # ObGD bounding
+        alpha = opt.step_size
+        kappa = opt.kappa
+        delta_bar = jnp.maximum(jnp.abs(error), 1.0)
+        dot_product = delta_bar * z_sum * alpha * kappa
+        alpha_eff = alpha / jnp.maximum(dot_product, 1.0)
+
+        # Apply updates: w += alpha_eff * error * z
+        new_weights = tuple(
+            w + alpha_eff * error * zt
+            for w, zt in zip(state.params.weights, new_weight_traces)
+        )
+        new_biases = tuple(
+            b + alpha_eff * error * zt
+            for b, zt in zip(state.params.biases, new_bias_traces)
+        )
+
+        new_params = MLPParams(weights=new_weights, biases=new_biases)
+        new_opt_state = MLPObGDState(
+            step_size=alpha,
+            kappa=kappa,
+            weight_traces=new_weight_traces,
+            bias_traces=new_bias_traces,
+            gamma=opt.gamma,
+            lamda=opt.lamda,
+        )
+        new_state = MLPLearnerState(params=new_params, optimizer_state=new_opt_state)
+
+        squared_error = error**2
+        metrics = jnp.array([squared_error, error, alpha_eff], dtype=jnp.float32)
+
+        return MLPUpdateResult(
+            state=new_state,
+            prediction=prediction,
+            error=jnp.atleast_1d(error),
+            metrics=metrics,
+        )
+
+
+def run_mlp_learning_loop[StreamStateT](
+    learner: MLPLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    key: Array,
+    learner_state: MLPLearnerState | None = None,
+) -> tuple[MLPLearnerState, Array]:
+    """Run the MLP learning loop using jax.lax.scan.
+
+    This is a JIT-compiled learning loop that uses scan for efficiency.
+
+    Args:
+        learner: The MLP learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run
+        key: JAX random key for stream and weight initialization
+        learner_state: Initial state (if None, will be initialized from stream)
+
+    Returns:
+        Tuple of (final_state, metrics_array) where metrics_array has shape
+        (num_steps, 3) with columns [squared_error, error, effective_step_size]
+    """
+    # Split key for initialization
+    stream_key, init_key = jax.random.split(key)
+
+    # Initialize states
+    if learner_state is None:
+        learner_state = learner.init(stream.feature_dim, init_key)
+    stream_state = stream.init(stream_key)
+
+    def step_fn(
+        carry: tuple[MLPLearnerState, StreamStateT], idx: Array
+    ) -> tuple[tuple[MLPLearnerState, StreamStateT], Array]:
+        l_state, s_state = carry
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(l_state, timestep.observation, timestep.target)
+        return (result.state, new_s_state), result.metrics
+
+    (final_learner, _), metrics = jax.lax.scan(
+        step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+    )
+
+    return final_learner, metrics
 
 
 # =============================================================================

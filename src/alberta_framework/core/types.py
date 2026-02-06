@@ -103,6 +103,38 @@ class AutostepState:
 
 
 @chex.dataclass(frozen=True)
+class ObGDState:
+    """State for the ObGD (Observation-bounded Gradient Descent) optimizer.
+
+    ObGD prevents overshooting by dynamically bounding the effective step-size
+    based on the magnitude of the TD error and eligibility traces. When the
+    combined update magnitude would be too large, the step-size is scaled down.
+
+    For supervised learning (gamma=0, lamda=0), traces equal the current
+    observation each step, making ObGD equivalent to LMS with dynamic
+    step-size bounding.
+
+    Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning
+    Finally Works"
+
+    Attributes:
+        step_size: Base learning rate alpha
+        kappa: Bounding sensitivity parameter (higher = more conservative)
+        traces: Per-weight eligibility traces z_i
+        bias_trace: Eligibility trace for the bias term
+        gamma: Discount factor for trace decay
+        lamda: Eligibility trace decay parameter lambda
+    """
+
+    step_size: Float[Array, ""]
+    kappa: Float[Array, ""]
+    traces: Float[Array, " feature_dim"]
+    bias_trace: Float[Array, ""]
+    gamma: Float[Array, ""]
+    lamda: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
 class LearnerState:
     """State for a linear learner.
 
@@ -114,7 +146,7 @@ class LearnerState:
 
     weights: Float[Array, " feature_dim"]
     bias: Float[Array, ""]
-    optimizer_state: LMSState | IDBDState | AutostepState
+    optimizer_state: LMSState | IDBDState | AutostepState | ObGDState
 
 
 @chex.dataclass(frozen=True)
@@ -256,6 +288,62 @@ def create_idbd_state(
 
 
 # =============================================================================
+# MLP Types (Step 2 of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class MLPParams:
+    """Parameters for a multi-layer perceptron.
+
+    Uses tuples of arrays (not lists) for proper JAX PyTree handling.
+
+    Attributes:
+        weights: Tuple of weight matrices, one per layer
+        biases: Tuple of bias vectors, one per layer
+    """
+
+    weights: tuple[Array, ...]
+    biases: tuple[Array, ...]
+
+
+@chex.dataclass(frozen=True)
+class MLPObGDState:
+    """ObGD optimizer state for MLP learners.
+
+    Maintains per-parameter eligibility traces for each layer.
+
+    Attributes:
+        step_size: Base learning rate alpha
+        kappa: Bounding sensitivity parameter
+        weight_traces: Tuple of per-layer weight eligibility traces
+        bias_traces: Tuple of per-layer bias eligibility traces
+        gamma: Discount factor for trace decay
+        lamda: Eligibility trace decay parameter lambda
+    """
+
+    step_size: Float[Array, ""]
+    kappa: Float[Array, ""]
+    weight_traces: tuple[Array, ...]
+    bias_traces: tuple[Array, ...]
+    gamma: Float[Array, ""]
+    lamda: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
+class MLPLearnerState:
+    """State for an MLP learner.
+
+    Attributes:
+        params: MLP parameters (weights and biases for each layer)
+        optimizer_state: ObGD optimizer state with per-layer traces
+    """
+
+    params: MLPParams
+    optimizer_state: MLPObGDState
+
+
+# =============================================================================
 # TD Learning Types (for Step 3+ of Alberta Plan)
 # =============================================================================
 
@@ -365,6 +453,35 @@ class TDLearnerState:
     weights: Float[Array, " feature_dim"]
     bias: Float[Array, ""]
     optimizer_state: TDOptimizerState
+
+
+def create_obgd_state(
+    feature_dim: int,
+    step_size: float = 1.0,
+    kappa: float = 2.0,
+    gamma: float = 0.0,
+    lamda: float = 0.0,
+) -> ObGDState:
+    """Create initial ObGD optimizer state.
+
+    Args:
+        feature_dim: Dimension of the feature vector
+        step_size: Base learning rate (default: 1.0)
+        kappa: Bounding sensitivity parameter (default: 2.0)
+        gamma: Discount factor for trace decay (default: 0.0 for supervised)
+        lamda: Eligibility trace decay parameter (default: 0.0 for supervised)
+
+    Returns:
+        Initial ObGD state
+    """
+    return ObGDState(
+        step_size=jnp.array(step_size, dtype=jnp.float32),
+        kappa=jnp.array(kappa, dtype=jnp.float32),
+        traces=jnp.zeros(feature_dim, dtype=jnp.float32),
+        bias_trace=jnp.array(0.0, dtype=jnp.float32),
+        gamma=jnp.array(gamma, dtype=jnp.float32),
+        lamda=jnp.array(lamda, dtype=jnp.float32),
+    )
 
 
 def create_autostep_state(

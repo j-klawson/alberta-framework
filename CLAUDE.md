@@ -4,7 +4,7 @@ A research-first framework for the Alberta Plan: Building the foundations of Con
 
 ## Project Overview
 
-This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (Incremental Delta-Bar-Delta) and Autostep with meta-learned step-sizes can match or beat hand-tuned LMS on non-stationary supervised learning problems.
+This framework implements the Alberta Plan for AI Research, progressing through increasingly complex continual learning settings. Step 1 demonstrates that IDBD and Autostep with meta-learned step-sizes can match or beat hand-tuned LMS. Step 2 extends to nonlinear function approximation with MLP and ObGD.
 
 **Core Philosophy**: Temporal uniformity — every component updates at every time step.
 
@@ -14,10 +14,11 @@ This framework implements Step 1 of the Alberta Plan: demonstrating that IDBD (I
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, optimizer states, TDTimeStep, TDLearnerState, TDIDBDState, AutoTDIDBDState
-│   ├── optimizers.py   # LMS, IDBD, Autostep, TDIDBD, AutoTDIDBD optimizers
+│   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types
+│   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers
 │   ├── normalizers.py  # OnlineNormalizer, NormalizerState
-│   └── learners.py     # LinearLearner, TDLinearLearner, run_learning_loop, run_td_learning_loop
+│   ├── initializers.py # sparse_init (LeCun + sparsity)
+│   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -49,6 +50,10 @@ python "examples/The Alberta Plan/Step1/normalization_study.py"
 # Run Sutton 1992 replications
 python "examples/The Alberta Plan/Step1/sutton1992_experiment1.py"
 python "examples/The Alberta Plan/Step1/sutton1992_experiment2.py"
+
+# Run Step 2 demonstrations (MLP + ObGD)
+python "examples/The Alberta Plan/Step2/linear_vs_mlp_comparison.py"
+python "examples/The Alberta Plan/Step2/linear_vs_mlp_comparison.py" --output-dir output/
 
 # Save plots to output directory (instead of displaying interactively)
 python "examples/The Alberta Plan/Step1/idbd_lms_autostep_comparison.py" --output-dir output/
@@ -121,6 +126,43 @@ Streaming feature normalization following the Alberta Plan:
 - `x_normalized = (x - mean) / (std + epsilon)`
 - Mean and variance estimated via exponential moving average
 - Updates at every time step (temporal uniformity)
+
+### ObGD (Observation-bounded Gradient Descent)
+Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally Works"
+
+Dynamic step-size bounding to prevent overshooting:
+1. `z = gamma * lamda * z + observation` — update eligibility traces
+2. `M = alpha * kappa * max(|error|, 1) * (||z_w||_1 + |z_b|)` — compute bound
+3. `alpha_eff = alpha / max(M, 1)` — effective step-size
+4. `w += alpha_eff * error * z` — bounded weight update
+
+For supervised learning (gamma=0, lamda=0), traces = observation, making ObGD equivalent to LMS with dynamic bounding. For RL, nonzero gamma/lamda enable eligibility traces.
+
+### Sparse Initialization
+Reference: Elsayed et al. 2024
+
+LeCun-scale initialization with per-neuron sparsity:
+- `w ~ U[-sqrt(1/fan_in), sqrt(1/fan_in)]` — LeCun uniform
+- Zero out 90% of input connections per output neuron
+- Creates sparser gradient flows for improved streaming stability
+
+### MLP Learner
+Reference: Elsayed et al. 2024
+
+Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)`
+- Parameterless layer normalization (no learned scale/shift)
+- Sparse initialization (90% default)
+- ObGD bounding applied globally across all parameter traces
+- Gradient computation via `jax.grad` on pure forward function
+
+```python
+from alberta_framework import MLPLearner, RandomWalkStream, run_mlp_learning_loop
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9)
+state, metrics = run_mlp_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
+```
 
 ### Success Criterion
 IDBD/Autostep should beat LMS when starting from the same step-size (demonstrates adaptation).
@@ -430,10 +472,10 @@ Run the external normalization study to compare IDBD/Autostep with and without O
 python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds 30 --output-dir output/
 ```
 
-## Future Work (Out of Scope for v0.1.0)
-- Step 2: Feature generation/testing
+## Future Work
+- Step 2 (continued): Feature generation/testing, nonlinear feature discovery
 - Step 3: GVF predictions, Horde architecture
-- Step 4: Actor-critic control
+- Step 4: Actor-critic control with ObGD
 - Steps 5-6: Average reward formulation
 
 ## Version Management and CI/CD
@@ -469,6 +511,15 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.5.0 (2026-02-06)
+- **FEATURE**: ObGD (Observation-bounded Gradient Descent) optimizer with dynamic step-size bounding (Elsayed et al. 2024)
+- **FEATURE**: `MLPLearner` with parameterless LayerNorm, LeakyReLU, and sparse initialization
+- **FEATURE**: `sparse_init()` for LeCun-scale initialization with per-neuron sparsity
+- **FEATURE**: `run_mlp_learning_loop()` for JIT-compiled MLP training via `jax.lax.scan`
+- **FEATURE**: MLP types: `MLPParams`, `MLPObGDState`, `MLPLearnerState`, `MLPUpdateResult`
+- **FEATURE**: ObGD types: `ObGDState`, `create_obgd_state()`
+- **FEATURE**: Step 2 example: `linear_vs_mlp_comparison.py`
 
 ### v0.4.0 (2026-02-04)
 - **FEATURE**: Implemented TD-IDBD optimizer for temporal-difference learning with per-weight adaptive step-sizes and eligibility traces (Kearney et al., 2019)
