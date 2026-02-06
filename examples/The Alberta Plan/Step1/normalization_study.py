@@ -74,7 +74,9 @@ class ScaledRandomWalkStream:
         weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
         return ScaledRandomWalkState(key=key, true_weights=weights)
 
-    def step(self, state: ScaledRandomWalkState, idx: Array) -> tuple[TimeStep, ScaledRandomWalkState]:
+    def step(
+        self, state: ScaledRandomWalkState, idx: Array,
+    ) -> tuple[TimeStep, ScaledRandomWalkState]:
         """Generate one time step."""
         del idx  # unused
         key, k_drift, k_x, k_noise = jr.split(state.key, 4)

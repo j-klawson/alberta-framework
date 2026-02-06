@@ -25,10 +25,10 @@ import jax.random as jr
 import numpy as np
 
 from alberta_framework import (
-    AbruptChangeStream,
-    Autostep,
     IDBD,
     LMS,
+    AbruptChangeStream,
+    Autostep,
     LinearLearner,
     RandomWalkStream,
     Timer,
@@ -279,7 +279,8 @@ def run_practical_comparison(
 
     print(f"{'Method':<25} {'Cumulative Error':>16} {'Final 100 Mean':>16}")
     print("-" * 60)
-    print(f"{'LMS (stuck at ' + str(initial_step_size) + ')':<25} {lms_cumulative:>16.2f} {lms_final:>16.6f}")
+    lms_label = f"LMS (stuck at {initial_step_size})"
+    print(f"{lms_label:<25} {lms_cumulative:>16.2f} {lms_final:>16.6f}")
     print(f"{'IDBD (adapts)':<25} {idbd_cumulative:>16.2f} {idbd_final:>16.6f}")
 
     if idbd_cumulative < lms_cumulative:

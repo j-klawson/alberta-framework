@@ -18,17 +18,13 @@ This will:
 
 from pathlib import Path
 
-import jax.random as jr
-
 from alberta_framework import (
-    Autostep,
     IDBD,
     LMS,
+    Autostep,
     LinearLearner,
     RandomWalkStream,
     Timer,
-    metrics_to_dicts,
-    run_learning_loop,
 )
 from alberta_framework.utils import (
     ExperimentConfig,

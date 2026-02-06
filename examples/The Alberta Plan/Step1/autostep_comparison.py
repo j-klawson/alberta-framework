@@ -36,12 +36,12 @@ import numpy as np
 from jax import lax
 
 from alberta_framework import (
-    Autostep,
     IDBD,
     LMS,
-    LinearLearner,
     AbruptChangeStream,
+    Autostep,
     CyclicStream,
+    LinearLearner,
     RandomWalkStream,
     StepSizeTrackingConfig,
     Timer,
@@ -350,7 +350,8 @@ def plot_step_size_adaptation_detail(
 
     colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
-    for ax, (name, data) in zip(axes, [(n, d) for n, d in results.items() if d["optimizer_type"] != "LMS"]):
+    adaptive = [(n, d) for n, d in results.items() if d["optimizer_type"] != "LMS"]
+    for ax, (name, data) in zip(axes, adaptive):
         step_sizes = data["step_sizes"]
         indices = data["recording_indices"]
 

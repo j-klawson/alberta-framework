@@ -32,8 +32,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 
-from alberta_framework import IDBD, LinearLearner, Timer, run_learning_loop
-from alberta_framework.core.types import IDBDState, TimeStep
+from alberta_framework import IDBD, LinearLearner, Timer
+from alberta_framework.core.types import IDBDState
 from alberta_framework.streams.synthetic import SuttonExperiment1Stream
 
 
@@ -135,7 +135,11 @@ def run_per_weight_lms(
         Tuple of (final_weights, list of squared errors, final stream state)
     """
     feature_dim = stream.feature_dim
-    weights = initial_weights if initial_weights is not None else jnp.zeros(feature_dim, dtype=jnp.float32)
+    weights = (
+        initial_weights
+        if initial_weights is not None
+        else jnp.zeros(feature_dim, dtype=jnp.float32)
+    )
 
     # Per-weight learning rates
     alphas = jnp.concatenate([
@@ -253,7 +257,10 @@ def plot_figure4(history: dict[str, list], save_path: str | None = None) -> None
 
     # Add horizontal reference lines
     ax.axhline(y=0.13, color="blue", linestyle="--", alpha=0.5, label="Expected optimal (~0.13)")
-    ax.axhline(y=0.007, color="red", linestyle="--", alpha=0.5, label="Expected irrelevant (<0.007)")
+    ax.axhline(
+        y=0.007, color="red", linestyle="--", alpha=0.5,
+        label="Expected irrelevant (<0.007)",
+    )
 
     ax.set_xlabel("Examples (thousands)", fontsize=12)
     ax.set_ylabel("Learning Rate (alpha)", fontsize=12)
@@ -275,7 +282,11 @@ def plot_figure4(history: dict[str, list], save_path: str | None = None) -> None
         plt.show()
 
 
-def plot_figure5(results: dict[float, float], optimal_alpha: float | None = None, save_path: str | None = None) -> None:
+def plot_figure5(
+    results: dict[float, float],
+    optimal_alpha: float | None = None,
+    save_path: str | None = None,
+) -> None:
     """Plot asymptotic error vs learning rate (Figure 5 from paper).
 
     Args:
@@ -367,13 +378,13 @@ def main(output_dir: str | None = None) -> None:
         final_relevant = history["relevant_alphas"][-1]
         final_irrelevant = history["irrelevant_alphas"][-1]
 
-        print(f"Initial learning rate: 0.05 (all weights)")
-        print(f"\nFinal learning rates after 250,000 steps:")
+        print("Initial learning rate: 0.05 (all weights)")
+        print("\nFinal learning rates after 250,000 steps:")
         print(f"  Relevant inputs (mean):   {final_relevant:.4f}")
         print(f"  Irrelevant inputs (mean): {final_irrelevant:.6f}")
-        print(f"\nPaper reports:")
-        print(f"  Relevant inputs:   ~0.13")
-        print(f"  Irrelevant inputs: <0.007 (heading towards 0)")
+        print("\nPaper reports:")
+        print("  Relevant inputs:   ~0.13")
+        print("  Irrelevant inputs: <0.007 (heading towards 0)")
 
         if final_relevant > 0.1 and final_irrelevant < 0.01:
             print("\nSUCCESS: Learning rates evolved as expected!")
@@ -404,11 +415,11 @@ def main(output_dir: str | None = None) -> None:
         min_alpha = min(results, key=results.get)  # type: ignore
         min_mse = results[min_alpha]
 
-        print(f"\nGrid search results:")
+        print("\nGrid search results:")
         print(f"  Optimal alpha: {min_alpha:.3f}")
         print(f"  Minimum MSE:   {min_mse:.4f}")
         print(f"\nIDDB converged to: {final_relevant:.3f}")
-        print(f"Paper reports optimal: ~0.13")
+        print("Paper reports optimal: ~0.13")
 
         # Check if IDBD found near-optimal
         if abs(final_relevant - min_alpha) < 0.03:

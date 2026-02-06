@@ -34,7 +34,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import jax.random as jr
 
-from alberta_framework import IDBD, LMS, LinearLearner, Timer, run_learning_loop, metrics_to_dicts
+from alberta_framework import IDBD, LMS, LinearLearner, Timer, metrics_to_dicts, run_learning_loop
 from alberta_framework.streams.synthetic import SuttonExperiment1Stream
 
 
@@ -68,7 +68,9 @@ def run_single_experiment(
 
     # Measurement phase - use a new key derived from original
     key_measure = jr.key(seed + 1000000)  # Different key for measurement
-    _, metrics = run_learning_loop(learner, stream, measurement_steps, key_measure, learner_state=state)
+    _, metrics = run_learning_loop(
+        learner, stream, measurement_steps, key_measure, learner_state=state,
+    )
 
     # Compute average MSE
     metrics_list = metrics_to_dicts(metrics)

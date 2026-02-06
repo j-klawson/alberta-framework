@@ -6,7 +6,7 @@ via Temporal Difference (TD) on a Gymnasium environment.
 
 import jax.numpy as jnp
 
-from alberta_framework import LinearLearner, LMS, Timer
+from alberta_framework import LMS, LinearLearner, Timer
 from alberta_framework.streams.gymnasium import TDStream, make_random_policy
 
 try:
@@ -41,10 +41,10 @@ def main():
         # Initialize state
         state = learner.init(stream.feature_dim)
 
-        print(f"TD Learning on CartPole-v1")
+        print("TD Learning on CartPole-v1")
         print(f"Optimizer: LMS (step_size={step_size})")
         print(f"Feature dim: {stream.feature_dim}")
-        print(f"Discount factor (gamma): 0.99")
+        print("Discount factor (gamma): 0.99")
         print("-" * 50)
 
         # Run learning loop manually to update value function in stream

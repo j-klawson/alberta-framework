@@ -24,7 +24,6 @@ Experimental Design (2x2x3 factorial):
 """
 
 import argparse
-from functools import partial
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -32,8 +31,8 @@ import jax.random as jr
 import numpy as np
 
 from alberta_framework import (
-    Autostep,
     IDBD,
+    Autostep,
     LinearLearner,
     NormalizedLinearLearner,
     OnlineNormalizer,
@@ -270,7 +269,9 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
 
         print("\nFinal MSE (mean +/- std over last 1000 steps):")
         print("-" * 80)
-        print(f"{'Condition':<20} {'IDBD':>15} {'IDBD+Norm':>15} {'Autostep':>15} {'Autostep+Norm':>15}")
+        header = f"{'Condition':<20} {'IDBD':>15} {'IDBD+Norm':>15}"
+        header += f" {'Autostep':>15} {'Autostep+Norm':>15}"
+        print(header)
         print("-" * 80)
 
         for stream_name, _ in stream_configs:
@@ -324,9 +325,9 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
             print(f"  Autostep improvement (delta MSE): {auto_delta:>10.6f}")
 
             if idbd_delta > auto_delta:
-                print(f"  --> IDBD benefits MORE from normalization (supports H2)")
+                print("  --> IDBD benefits MORE from normalization (supports H2)")
             else:
-                print(f"  --> Autostep benefits MORE (contradicts H2)")
+                print("  --> Autostep benefits MORE (contradicts H2)")
 
         # Conclusions
         print("\n" + "=" * 80)
@@ -335,7 +336,12 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
 
         # Check H0/H1 for Autostep
         auto_static_base = results["Autostep_Static"]["final_mse_mean"]
-        auto_static_norm = results["Autostep_Static+Norm"]["final_mse_mean"] if "Autostep_Static+Norm" in results else results["Autostep+Norm_Static"]["final_mse_mean"]
+        _norm_key = (
+            "Autostep_Static+Norm"
+            if "Autostep_Static+Norm" in results
+            else "Autostep+Norm_Static"
+        )
+        auto_static_norm = results[_norm_key]["final_mse_mean"]  # noqa: F841
 
         auto_abrupt_base = results["Autostep_Abrupt"]["final_mse_mean"]
         auto_abrupt_norm = results["Autostep+Norm_Abrupt"]["final_mse_mean"]

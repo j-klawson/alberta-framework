@@ -28,7 +28,6 @@ from alberta_framework.streams.gymnasium import (
     PredictionMode,
     collect_trajectory,
     learn_from_trajectory,
-    make_gymnasium_stream,
 )
 
 
@@ -216,7 +215,7 @@ def demo_stream_usage():
         seed=42,
     )
 
-    print(f"\nEnvironment: CartPole-v1")
+    print("\nEnvironment: CartPole-v1")
     print(f"Feature dimension: {stream.feature_dim}")
     print(f"Target dimension: {stream.target_dim}")
     print(f"Prediction mode: {stream.mode}")
