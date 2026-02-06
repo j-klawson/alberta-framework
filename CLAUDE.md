@@ -287,7 +287,7 @@ result = run_learning_loop_batched(
 Key features:
 - `jax.vmap` parallelizes over seeds, not steps — memory scales with num_seeds
 - `jax.lax.scan` processes steps sequentially within each seed
-- Returns `BatchedLearningResult` or `BatchedNormalizedResult` NamedTuples
+- Returns `BatchedLearningResult`, `BatchedNormalizedResult`, or `BatchedMLPResult`
 - Tracking histories get batched shapes: `(num_seeds, num_recordings, ...)`
 - Same initial state used for all seeds (controlled variation via different keys)
 
@@ -306,6 +306,17 @@ result = run_normalized_learning_loop_batched(
 )
 # result.metrics has shape (30, 10000, 4)
 # result.step_size_history and result.normalizer_history both batched
+```
+
+For MLP learners:
+```python
+from alberta_framework import MLPLearner, run_mlp_learning_loop_batched
+
+learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0)
+keys = jr.split(jr.key(42), 30)
+result = run_mlp_learning_loop_batched(learner, stream, num_steps=10000, keys=keys)
+# result.metrics has shape (30, 10000, 3)
+# result.states.params.weights[0] has shape (30, 128, feature_dim)
 ```
 
 ## Gymnasium Integration
@@ -535,6 +546,9 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.5.3 (2026-02-06)
+- **FEATURE**: `run_mlp_learning_loop_batched()` for vmap-based multi-seed MLP training with `BatchedMLPResult` return type
 
 ### v0.5.2 (2026-02-06)
 - **FIX**: Resolved mypy type error in `MLPLearner` z_sum computation — replaced `sum()` over JAX arrays with explicit `jnp.array(0.0)` accumulator
