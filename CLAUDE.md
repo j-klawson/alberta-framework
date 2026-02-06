@@ -475,7 +475,7 @@ python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds
 ## Future Work
 - Step 2 (continued): Feature generation/testing, nonlinear feature discovery
 - Step 3: GVF predictions, Horde architecture
-- Step 4: Actor-critic control with ObGD
+- Step 4: Actor-critic control with ObGD; add AdaptiveObGD (Appendix B of Elsayed et al. 2024) with RMSProp-style second-moment normalization
 - Steps 5-6: Average reward formulation
 
 ## Version Management and CI/CD
