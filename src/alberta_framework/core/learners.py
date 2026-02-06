@@ -1299,8 +1299,11 @@ class MLPLearner:
         )
 
         # Compute global z_sum (L1 norm across all traces)
-        z_sum = sum(jnp.sum(jnp.abs(zt)) for zt in new_weight_traces)
-        z_sum = z_sum + sum(jnp.sum(jnp.abs(zt)) for zt in new_bias_traces)
+        z_sum = jnp.array(0.0)
+        for zt in new_weight_traces:
+            z_sum = z_sum + jnp.sum(jnp.abs(zt))
+        for zt in new_bias_traces:
+            z_sum = z_sum + jnp.sum(jnp.abs(zt))
 
         # ObGD bounding
         alpha = opt.step_size
