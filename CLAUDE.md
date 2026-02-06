@@ -8,6 +8,16 @@ This framework implements the Alberta Plan for AI Research, progressing through 
 
 **Core Philosophy**: Temporal uniformity — every component updates at every time step.
 
+## Project Architecture
+- This is a multi-repo research ecosystem: alberta-framework (core RL library), chronos-sec (security experiments), and related experiment repos
+- When analyzing cross-repo dependencies or planning features, always read the sibling project's current API before assuming interfaces
+- After framework API changes, test downstream repos for breaking changes (e.g., result.metrics type changes)
+
+## Python Environment
+- Always activate the project's Python virtual environment before running pip install or any Python commands: `source .venv/bin/activate` (or the appropriate venv path)
+- When installing packages, always quote version specifiers to avoid shell expansion: `pip install 'package>=1.0,<2.0'`
+- For GPU/JAX projects, always use the [gpu] extra when installing: `pip install -e '.[gpu]'`
+
 ## Quick Reference
 
 ### Package Structure
@@ -93,6 +103,20 @@ mkdocs build          # Build static site to site/
 - Use pytest fixtures from `conftest.py`
 - Use chex assertions: `chex.assert_shape()`, `chex.assert_trees_all_close()`, `chex.assert_tree_all_finite()`
 - All tests should pass before committing
+
+## Git Workflow
+- When asked for a commit message, generate it in conventional commit format and include the scope (e.g., `fix(learners):`, `docs(plan):`, `feat(experiments):`)
+- Always check current version in pyproject.toml or setup.cfg before suggesting version bumps — never assume the current version
+
+## Testing & Linting
+- After making any code edits, always run the full test suite (`pytest`) and linter (`ruff check .` and `mypy`) before presenting results
+- If linting fixes break tests, fix the tests in the same pass — do not present partial fixes
+- For type errors (mypy), resolve all errors in a single pass rather than introducing new type confusion across fix iterations
+
+## Documentation Updates
+- When updating CLAUDE.md with session progress, always include: date, what was accomplished, current state of the project, and next steps
+- When updating study/research documents, ask the user for the exact file paths before starting — do not assume locations
+- When asked to write 'in the user's voice', default to formal academic prose that is clear and direct — NOT informal or blog-style
 
 ## Key Algorithms
 
@@ -511,6 +535,10 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.5.2 (2026-02-06)
+- **FIX**: Resolved mypy type error in `MLPLearner` z_sum computation — replaced `sum()` over JAX arrays with explicit `jnp.array(0.0)` accumulator
+- **DOCS**: Added Project Architecture, Python Environment, Git Workflow, Testing & Linting, and Documentation Updates sections to CLAUDE.md
 
 ### v0.5.0 (2026-02-06)
 - **FEATURE**: ObGD (Observation-bounded Gradient Descent) optimizer with dynamic step-size bounding (Elsayed et al. 2024)
