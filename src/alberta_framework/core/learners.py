@@ -25,6 +25,7 @@ from alberta_framework.core.types import (
     AutostepState,
     AutoTDIDBDState,
     BatchedLearningResult,
+    BatchedMLPNormalizedResult,
     BatchedMLPResult,
     BatchedNormalizedResult,
     IDBDState,
@@ -1450,6 +1451,373 @@ def run_mlp_learning_loop_batched[StreamStateT](
     return BatchedMLPResult(
         states=batched_states,
         metrics=batched_metrics,
+    )
+
+
+# =============================================================================
+# Normalized MLP Learner (Step 2 of Alberta Plan)
+# =============================================================================
+
+
+@chex.dataclass(frozen=True)
+class NormalizedMLPLearnerState:
+    """State for an MLP learner with online feature normalization.
+
+    Attributes:
+        learner_state: Underlying MLP learner state (params, optimizer)
+        normalizer_state: Online normalizer state (mean, var estimates)
+    """
+
+    learner_state: MLPLearnerState
+    normalizer_state: EMANormalizerState | WelfordNormalizerState
+
+
+@chex.dataclass(frozen=True)
+class NormalizedMLPUpdateResult:
+    """Result of a normalized MLP learner update step.
+
+    Attributes:
+        state: Updated normalized MLP learner state
+        prediction: Prediction made before update
+        error: Prediction error
+        metrics: Array of metrics [squared_error, error, effective_step_size, normalizer_mean_var]
+    """
+
+    state: NormalizedMLPLearnerState
+    prediction: Prediction
+    error: Float[Array, ""]
+    metrics: Float[Array, " 4"]
+
+
+class NormalizedMLPLearner:
+    """MLP learner with online feature normalization.
+
+    Wraps an MLPLearner with online feature normalization, following
+    the Alberta Plan's approach to handling varying feature scales.
+
+    Normalization is applied to features before prediction and learning:
+        x_normalized = (x - mean) / (std + epsilon)
+
+    The normalizer statistics update at every time step, maintaining
+    temporal uniformity.
+
+    Unlike NormalizedLinearLearner which exposes optimizer params directly,
+    this class accepts a pre-constructed MLPLearner to avoid duplicating
+    its constructor parameters.
+
+    Attributes:
+        learner: Underlying MLP learner
+        normalizer: Online feature normalizer
+    """
+
+    def __init__(
+        self,
+        learner: MLPLearner,
+        normalizer: (
+            Normalizer[EMANormalizerState] | Normalizer[WelfordNormalizerState] | None
+        ) = None,
+    ):
+        """Initialize the normalized MLP learner.
+
+        Args:
+            learner: Pre-constructed MLP learner
+            normalizer: Feature normalizer. Defaults to EMANormalizer()
+        """
+        self._learner = learner
+        self._normalizer = normalizer or EMANormalizer()
+
+    def init(self, feature_dim: int, key: Array) -> NormalizedMLPLearnerState:
+        """Initialize normalized MLP learner state.
+
+        Args:
+            feature_dim: Dimension of the input feature vector
+            key: JAX random key for weight initialization
+
+        Returns:
+            Initial state with sparse weights and unit variance estimates
+        """
+        return NormalizedMLPLearnerState(
+            learner_state=self._learner.init(feature_dim, key),
+            normalizer_state=self._normalizer.init(feature_dim),
+        )
+
+    def predict(
+        self,
+        state: NormalizedMLPLearnerState,
+        observation: Observation,
+    ) -> Prediction:
+        """Compute prediction for an observation.
+
+        Normalizes the observation using current statistics before prediction.
+
+        Args:
+            state: Current normalized MLP learner state
+            observation: Raw (unnormalized) input feature vector
+
+        Returns:
+            Scalar prediction
+        """
+        normalized_obs = self._normalizer.normalize_only(state.normalizer_state, observation)
+        return self._learner.predict(state.learner_state, normalized_obs)
+
+    def update(
+        self,
+        state: NormalizedMLPLearnerState,
+        observation: Observation,
+        target: Target,
+    ) -> NormalizedMLPUpdateResult:
+        """Update MLP given observation and target.
+
+        Performs one step of the learning algorithm:
+        1. Normalize observation (and update normalizer statistics)
+        2. Delegate to underlying MLP learner
+        3. Append normalizer_mean_var metric
+
+        Args:
+            state: Current normalized MLP learner state
+            observation: Raw (unnormalized) input feature vector
+            target: Desired output
+
+        Returns:
+            NormalizedMLPUpdateResult with new state, prediction, error, and metrics
+        """
+        # Normalize observation and update normalizer state
+        normalized_obs, new_normalizer_state = self._normalizer.normalize(
+            state.normalizer_state, observation
+        )
+
+        # Delegate to underlying MLP learner
+        result = self._learner.update(
+            state.learner_state,
+            normalized_obs,
+            target,
+        )
+
+        # Build combined state
+        new_state = NormalizedMLPLearnerState(
+            learner_state=result.state,
+            normalizer_state=new_normalizer_state,
+        )
+
+        # Add normalizer metrics to the metrics array
+        normalizer_mean_var = jnp.mean(new_normalizer_state.var)
+        metrics = jnp.concatenate([result.metrics, jnp.array([normalizer_mean_var])])
+
+        return NormalizedMLPUpdateResult(
+            state=new_state,
+            prediction=result.prediction,
+            error=result.error,
+            metrics=metrics,
+        )
+
+
+def run_mlp_normalized_learning_loop[StreamStateT](
+    learner: NormalizedMLPLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    key: Array,
+    learner_state: NormalizedMLPLearnerState | None = None,
+    normalizer_tracking: NormalizerTrackingConfig | None = None,
+) -> (
+    tuple[NormalizedMLPLearnerState, Array]
+    | tuple[NormalizedMLPLearnerState, Array, NormalizerHistory]
+):
+    """Run the normalized MLP learning loop using jax.lax.scan.
+
+    Args:
+        learner: The normalized MLP learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run
+        key: JAX random key for stream and weight initialization
+        learner_state: Initial state (if None, will be initialized from stream)
+        normalizer_tracking: Optional config for recording per-feature normalizer state.
+            When provided, returns NormalizerHistory with means and variances over time.
+
+    Returns:
+        If no tracking:
+            Tuple of (final_state, metrics_array) where metrics_array has shape
+            (num_steps, 4) with columns [squared_error, error, effective_step_size,
+            normalizer_mean_var]
+        If normalizer_tracking:
+            Tuple of (final_state, metrics_array, normalizer_history)
+
+    Raises:
+        ValueError: If normalizer_tracking.interval is invalid
+    """
+    # Validate tracking config
+    if normalizer_tracking is not None:
+        if normalizer_tracking.interval < 1:
+            raise ValueError(
+                f"normalizer_tracking.interval must be >= 1, got {normalizer_tracking.interval}"
+            )
+        if normalizer_tracking.interval > num_steps:
+            raise ValueError(
+                f"normalizer_tracking.interval ({normalizer_tracking.interval}) "
+                f"must be <= num_steps ({num_steps})"
+            )
+
+    # Split key for initialization
+    stream_key, init_key = jax.random.split(key)
+
+    # Initialize states
+    if learner_state is None:
+        learner_state = learner.init(stream.feature_dim, init_key)
+    stream_state = stream.init(stream_key)
+
+    feature_dim = stream.feature_dim
+
+    if normalizer_tracking is None:
+        # Simple case without tracking
+        def step_fn(
+            carry: tuple[NormalizedMLPLearnerState, StreamStateT], idx: Array
+        ) -> tuple[tuple[NormalizedMLPLearnerState, StreamStateT], Array]:
+            l_state, s_state = carry
+            timestep, new_s_state = stream.step(s_state, idx)
+            result = learner.update(l_state, timestep.observation, timestep.target)
+            return (result.state, new_s_state), result.metrics
+
+        (final_learner, _), metrics = jax.lax.scan(
+            step_fn, (learner_state, stream_state), jnp.arange(num_steps)
+        )
+
+        return final_learner, metrics
+
+    # Tracking enabled
+    norm_interval = normalizer_tracking.interval
+    norm_num_recordings = num_steps // norm_interval
+
+    norm_means = jnp.zeros((norm_num_recordings, feature_dim), dtype=jnp.float32)
+    norm_vars = jnp.zeros((norm_num_recordings, feature_dim), dtype=jnp.float32)
+    norm_rec_indices = jnp.zeros(norm_num_recordings, dtype=jnp.int32)
+
+    def step_fn_with_tracking(
+        carry: tuple[NormalizedMLPLearnerState, StreamStateT, Array, Array, Array],
+        idx: Array,
+    ) -> tuple[
+        tuple[NormalizedMLPLearnerState, StreamStateT, Array, Array, Array],
+        Array,
+    ]:
+        l_state, s_state, n_means, n_vars, n_rec = carry
+
+        # Perform learning step
+        timestep, new_s_state = stream.step(s_state, idx)
+        result = learner.update(l_state, timestep.observation, timestep.target)
+
+        # Normalizer state tracking
+        should_record = (idx % norm_interval) == 0
+        recording_idx = idx // norm_interval
+
+        norm_state = result.state.normalizer_state
+
+        new_n_means = jax.lax.cond(
+            should_record,
+            lambda _: n_means.at[recording_idx].set(norm_state.mean),
+            lambda _: n_means,
+            None,
+        )
+
+        new_n_vars = jax.lax.cond(
+            should_record,
+            lambda _: n_vars.at[recording_idx].set(norm_state.var),
+            lambda _: n_vars,
+            None,
+        )
+
+        new_n_rec = jax.lax.cond(
+            should_record,
+            lambda _: n_rec.at[recording_idx].set(idx),
+            lambda _: n_rec,
+            None,
+        )
+
+        return (
+            result.state,
+            new_s_state,
+            new_n_means,
+            new_n_vars,
+            new_n_rec,
+        ), result.metrics
+
+    initial_carry = (
+        learner_state,
+        stream_state,
+        norm_means,
+        norm_vars,
+        norm_rec_indices,
+    )
+
+    (
+        (final_learner, _, final_n_means, final_n_vars, final_n_rec),
+        metrics,
+    ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+
+    norm_history = NormalizerHistory(
+        means=final_n_means,
+        variances=final_n_vars,
+        recording_indices=final_n_rec,
+    )
+
+    return final_learner, metrics, norm_history
+
+
+def run_mlp_normalized_learning_loop_batched[StreamStateT](
+    learner: NormalizedMLPLearner,
+    stream: ScanStream[StreamStateT],
+    num_steps: int,
+    keys: Array,
+    learner_state: NormalizedMLPLearnerState | None = None,
+    normalizer_tracking: NormalizerTrackingConfig | None = None,
+) -> BatchedMLPNormalizedResult:
+    """Run normalized MLP learning loop across multiple seeds in parallel using jax.vmap.
+
+    Args:
+        learner: The normalized MLP learner to train
+        stream: Experience stream providing (observation, target) pairs
+        num_steps: Number of learning steps to run per seed
+        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        learner_state: Initial state (if None, will be initialized from stream).
+            The same initial state is used for all seeds.
+        normalizer_tracking: Optional config for recording normalizer state.
+            When provided, history arrays have shape (num_seeds, num_recordings, ...)
+
+    Returns:
+        BatchedMLPNormalizedResult containing:
+            - states: Batched final states with shape (num_seeds, ...) for each array
+            - metrics: Array of shape (num_seeds, num_steps, 4)
+            - normalizer_history: Batched history or None if tracking disabled
+    """
+
+    def single_seed_run(
+        key: Array,
+    ) -> tuple[NormalizedMLPLearnerState, Array, NormalizerHistory | None]:
+        result = run_mlp_normalized_learning_loop(
+            learner, stream, num_steps, key, learner_state, normalizer_tracking
+        )
+
+        if normalizer_tracking is not None:
+            state, metrics, norm_history = cast(
+                tuple[NormalizedMLPLearnerState, Array, NormalizerHistory], result
+            )
+            return state, metrics, norm_history
+        else:
+            state, metrics = cast(tuple[NormalizedMLPLearnerState, Array], result)
+            return state, metrics, None
+
+    batched_states, batched_metrics, batched_norm_history = jax.vmap(single_seed_run)(keys)
+
+    if normalizer_tracking is not None and batched_norm_history is not None:
+        batched_normalizer_history = NormalizerHistory(
+            means=batched_norm_history.means,
+            variances=batched_norm_history.variances,
+            recording_indices=batched_norm_history.recording_indices,
+        )
+    else:
+        batched_normalizer_history = None
+
+    return BatchedMLPNormalizedResult(
+        states=batched_states,
+        metrics=batched_metrics,
+        normalizer_history=batched_normalizer_history,
     )
 
 

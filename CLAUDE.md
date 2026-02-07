@@ -28,7 +28,7 @@ src/alberta_framework/
 │   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
-│   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
+│   └── learners.py     # LinearLearner, MLPLearner, NormalizedMLPLearner, TDLinearLearner, learning loops
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -190,6 +190,48 @@ import jax.random as jr
 stream = RandomWalkStream(feature_dim=10)
 learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9)
 state, metrics = run_mlp_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
+```
+
+### Normalized MLP Learner
+Wraps `MLPLearner` with online feature normalization (EMA or Welford), following the
+same pattern as `NormalizedLinearLearner`. Accepts a pre-constructed `MLPLearner` to
+avoid duplicating its constructor parameters.
+
+```python
+from alberta_framework import (
+    MLPLearner, NormalizedMLPLearner, EMANormalizer,
+    RandomWalkStream, run_mlp_normalized_learning_loop,
+    NormalizerTrackingConfig
+)
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+mlp = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9)
+learner = NormalizedMLPLearner(mlp, normalizer=EMANormalizer(decay=0.99))
+
+# Without tracking: returns (state, metrics) — metrics shape (num_steps, 4)
+state, metrics = run_mlp_normalized_learning_loop(
+    learner, stream, num_steps=10000, key=jr.key(42)
+)
+
+# With normalizer tracking: returns (state, metrics, normalizer_history)
+config = NormalizerTrackingConfig(interval=100)
+state, metrics, norm_history = run_mlp_normalized_learning_loop(
+    learner, stream, num_steps=10000, key=jr.key(42), normalizer_tracking=config
+)
+# norm_history.means: shape (100, 10), norm_history.variances: shape (100, 10)
+```
+
+Batched (vmap) version for multi-seed experiments:
+```python
+from alberta_framework import run_mlp_normalized_learning_loop_batched
+
+keys = jr.split(jr.key(42), 30)
+result = run_mlp_normalized_learning_loop_batched(
+    learner, stream, num_steps=10000, keys=keys
+)
+# result.metrics has shape (30, 10000, 4)
+# Columns: [squared_error, error, effective_step_size, normalizer_mean_var]
 ```
 
 ### Success Criterion
@@ -558,6 +600,10 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 - **FEATURE**: `WelfordNormalizer` — true Welford's algorithm with Bessel's correction for stationary distributions
 - **FEATURE**: `EMANormalizerState`, `WelfordNormalizerState`, `AnyNormalizerState` types
 - **FEATURE**: `NormalizedLinearLearner` now accepts any `Normalizer` subclass
+- **FEATURE**: `NormalizedMLPLearner` — wraps `MLPLearner` with online normalization (EMA or Welford)
+- **FEATURE**: `NormalizedMLPLearnerState`, `NormalizedMLPUpdateResult`, `BatchedMLPNormalizedResult` types
+- **FEATURE**: `run_mlp_normalized_learning_loop()` with optional `NormalizerTrackingConfig`
+- **FEATURE**: `run_mlp_normalized_learning_loop_batched()` for vmap-based multi-seed normalized MLP training
 
 ### v0.5.3 (2026-02-06)
 - **FEATURE**: `run_mlp_learning_loop_batched()` for vmap-based multi-seed MLP training with `BatchedMLPResult` return type

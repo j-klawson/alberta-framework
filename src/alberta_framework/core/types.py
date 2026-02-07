@@ -12,7 +12,7 @@ from jax import Array
 from jaxtyping import Float, Int
 
 if TYPE_CHECKING:
-    from alberta_framework.core.learners import NormalizedLearnerState
+    from alberta_framework.core.learners import NormalizedLearnerState, NormalizedMLPLearnerState
 
 # Type aliases for clarity
 Observation = Array  # x_t: feature vector
@@ -357,6 +357,26 @@ class BatchedMLPResult:
 
     states: MLPLearnerState  # Batched: each array has shape (num_seeds, ...)
     metrics: Float[Array, "num_seeds num_steps 3"]
+
+
+@chex.dataclass(frozen=True)
+class BatchedMLPNormalizedResult:
+    """Result from batched normalized MLP learning loop across multiple seeds.
+
+    Used with `run_mlp_normalized_learning_loop_batched` for vmap-based
+    GPU parallelization.
+
+    Attributes:
+        states: Batched normalized MLP learner states - each array has shape (num_seeds, ...)
+        metrics: Metrics array with shape (num_seeds, num_steps, 4)
+            where columns are [squared_error, error, effective_step_size, normalizer_mean_var]
+        normalizer_history: Optional normalizer history with batched shapes,
+            or None if tracking was disabled
+    """
+
+    states: "NormalizedMLPLearnerState"  # Batched: each array has shape (num_seeds, ...)
+    metrics: Float[Array, "num_seeds num_steps 4"]
+    normalizer_history: NormalizerHistory | None
 
 
 # =============================================================================
