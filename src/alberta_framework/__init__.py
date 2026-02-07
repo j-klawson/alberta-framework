@@ -40,7 +40,7 @@ References
 - Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Core types
 # Learners
