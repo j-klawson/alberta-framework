@@ -195,8 +195,8 @@ class NormalizerTrackingConfig:
 class NormalizerHistory:
     """History of per-feature normalizer state recorded during training.
 
-    Used for analyzing how the OnlineNormalizer adapts to distribution shifts
-    (reactive lag diagnostic).
+    Used for analyzing how the normalizer (EMA or Welford) adapts to
+    distribution shifts (reactive lag diagnostic).
 
     Attributes:
         means: Per-feature mean estimates at each recording, shape (num_recordings, feature_dim)

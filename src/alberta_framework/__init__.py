@@ -67,9 +67,12 @@ from alberta_framework.core.learners import (
 
 # Normalizers
 from alberta_framework.core.normalizers import (
-    NormalizerState,
-    OnlineNormalizer,
-    create_normalizer_state,
+    AnyNormalizerState,
+    EMANormalizer,
+    EMANormalizerState,
+    Normalizer,
+    WelfordNormalizer,
+    WelfordNormalizerState,
 )
 
 # Optimizers
@@ -180,7 +183,9 @@ __all__ = [
     "LMSState",
     "LearnerState",
     "NormalizerHistory",
-    "NormalizerState",
+    "AnyNormalizerState",
+    "EMANormalizerState",
+    "WelfordNormalizerState",
     "NormalizerTrackingConfig",
     "ObGDState",
     "Observation",
@@ -219,8 +224,9 @@ __all__ = [
     # Initializers
     "sparse_init",
     # Normalizers
-    "OnlineNormalizer",
-    "create_normalizer_state",
+    "Normalizer",
+    "EMANormalizer",
+    "WelfordNormalizer",
     # Learners - Supervised Learning
     "LinearLearner",
     "NormalizedLearnerState",

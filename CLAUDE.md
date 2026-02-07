@@ -26,7 +26,7 @@ src/alberta_framework/
 ├── core/
 │   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types
 │   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers
-│   ├── normalizers.py  # OnlineNormalizer, NormalizerState
+│   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
 │   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
 ├── streams/
@@ -148,8 +148,12 @@ Per-weight adaptive step-sizes with gradient normalization:
 ### Online Normalization
 Streaming feature normalization following the Alberta Plan:
 - `x_normalized = (x - mean) / (std + epsilon)`
-- Mean and variance estimated via exponential moving average
 - Updates at every time step (temporal uniformity)
+- **Normalizer ABC** with two subclasses (follows the `Optimizer[StateT]` pattern):
+  - `EMANormalizer`: Exponential moving average of mean/variance — suitable for non-stationary distributions
+  - `WelfordNormalizer`: Welford's algorithm with Bessel's correction — suitable for stationary distributions
+- State types: `EMANormalizerState` (mean, var, sample_count, decay), `WelfordNormalizerState` (mean, var, sample_count, p)
+- `NormalizedLinearLearner` accepts any `Normalizer` subclass, defaults to `EMANormalizer()`
 
 ### ObGD (Observation-bounded Gradient Descent)
 Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally Works"
@@ -222,7 +226,7 @@ Key features:
 - **Autostep's normalizers (v_i)** are tracked automatically when using Autostep
 
 ### Normalizer State Tracking for Reactive Lag Analysis
-The `run_normalized_learning_loop` function supports tracking the OnlineNormalizer's per-feature mean and variance estimates over time. This is essential for analyzing reactive lag — how quickly the normalizer adapts to distribution shifts:
+The `run_normalized_learning_loop` function supports tracking the normalizer's per-feature mean and variance estimates over time. This is essential for analyzing reactive lag — how quickly the normalizer adapts to distribution shifts:
 
 ```python
 from alberta_framework import (
@@ -467,7 +471,7 @@ stream = ScaledStreamWrapper(
 ```
 
 ### Dynamic Scale Streams (for testing normalization benefits)
-Two streams with time-varying feature scales, designed to test whether external normalization (OnlineNormalizer) provides benefits beyond Autostep's internal v_i normalization:
+Two streams with time-varying feature scales, designed to test whether external normalization (EMANormalizer) provides benefits beyond Autostep's internal v_i normalization:
 
 - **DynamicScaleShiftStream**: Feature scales abruptly change at intervals
   - Both target weights AND feature scales change at (possibly different) intervals
@@ -502,7 +506,7 @@ stream = ScaleDriftStream(
 ```
 
 ### External Normalization Study
-Run the external normalization study to compare IDBD/Autostep with and without OnlineNormalizer:
+Run the external normalization study to compare IDBD/Autostep with and without EMANormalizer:
 ```bash
 python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds 30 --output-dir output/
 ```
@@ -546,6 +550,14 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.6.0 (2026-02-07)
+- **BREAKING**: Replaced `OnlineNormalizer`, `NormalizerState`, `create_normalizer_state` with `Normalizer` ABC hierarchy
+- **FEATURE**: `Normalizer` ABC with generic `StateT` constraint, following the `Optimizer[StateT]` pattern
+- **FEATURE**: `EMANormalizer` — exponential moving average normalization (renamed from `OnlineNormalizer`, corrected docstrings)
+- **FEATURE**: `WelfordNormalizer` — true Welford's algorithm with Bessel's correction for stationary distributions
+- **FEATURE**: `EMANormalizerState`, `WelfordNormalizerState`, `AnyNormalizerState` types
+- **FEATURE**: `NormalizedLinearLearner` now accepts any `Normalizer` subclass
 
 ### v0.5.3 (2026-02-06)
 - **FEATURE**: `run_mlp_learning_loop_batched()` for vmap-based multi-seed MLP training with `BatchedMLPResult` return type

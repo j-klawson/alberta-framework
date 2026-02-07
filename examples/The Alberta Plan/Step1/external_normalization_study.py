@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""External Normalization Study: OnlineNormalizer vs Autostep/IDBD v_i.
+"""External Normalization Study: EMANormalizer vs Autostep/IDBD v_i.
 
 Tests whether external feature normalization provides benefits beyond
 Autostep's internal gradient normalization when feature scales change.
@@ -11,15 +11,15 @@ Research Gap:
 
 Hypotheses:
 - H0 (Redundancy): Autostep's v_i effectively tracks scale², making
-  OnlineNormalizer redundant
-- H1 (Complementary): OnlineNormalizer adapts faster to scale changes,
+  EMANormalizer redundant
+- H1 (Complementary): EMANormalizer adapts faster to scale changes,
   providing additional benefit during transients
-- H2 (IDBD-specific): IDBD benefits more from OnlineNormalizer than Autostep
+- H2 (IDBD-specific): IDBD benefits more from EMANormalizer than Autostep
   (since IDBD lacks v_i normalization)
 
 Experimental Design (2x2x3 factorial):
 - Optimizer: IDBD, Autostep
-- Normalization: None, OnlineNormalizer
+- Normalization: None, EMANormalizer
 - Scale Type: Static, Abrupt, Drift
 """
 
@@ -33,9 +33,9 @@ import numpy as np
 from alberta_framework import (
     IDBD,
     Autostep,
+    EMANormalizer,
     LinearLearner,
     NormalizedLinearLearner,
-    OnlineNormalizer,
     RandomWalkStream,
     ScaledStreamWrapper,
     Timer,
@@ -66,7 +66,7 @@ AUTOSTEP_PARAMS = {
     "normalizer_decay": 0.99,
 }
 
-# OnlineNormalizer hyperparameters
+# EMANormalizer hyperparameters
 NORMALIZER_PARAMS = {
     "decay": 0.99,
     "epsilon": 1e-8,
@@ -117,7 +117,7 @@ def make_idbd_normalized_learner():
     """Create IDBD learner with external normalization."""
     return NormalizedLinearLearner(
         optimizer=IDBD(**IDBD_PARAMS),
-        normalizer=OnlineNormalizer(**NORMALIZER_PARAMS),
+        normalizer=EMANormalizer(**NORMALIZER_PARAMS),
     )
 
 
@@ -130,7 +130,7 @@ def make_autostep_normalized_learner():
     """Create Autostep learner with external normalization."""
     return NormalizedLinearLearner(
         optimizer=Autostep(**AUTOSTEP_PARAMS),
-        normalizer=OnlineNormalizer(**NORMALIZER_PARAMS),
+        normalizer=EMANormalizer(**NORMALIZER_PARAMS),
     )
 
 
@@ -226,7 +226,7 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
 
         print("=" * 80)
         print("External Normalization Study")
-        print("Testing: Does OnlineNormalizer help IDBD/Autostep with dynamic scales?")
+        print("Testing: Does EMANormalizer help IDBD/Autostep with dynamic scales?")
         print("=" * 80)
         print(f"\nConfig: {FEATURE_DIM} features, {NUM_STEPS} steps, {num_seeds} seeds")
         print(f"Scale range: {SCALE_RANGE[0]} to {SCALE_RANGE[1]}")
@@ -287,7 +287,7 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
         print("NORMALIZATION BENEFIT ANALYSIS")
         print("=" * 80)
 
-        print("\nImprovement from adding OnlineNormalizer:")
+        print("\nImprovement from adding EMANormalizer:")
         print("-" * 80)
 
         for stream_name, _ in stream_configs:
@@ -351,14 +351,14 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
         abrupt_pct, abrupt_dir = compute_improvement(auto_abrupt_base, auto_abrupt_norm)
 
         if abs((auto_abrupt_norm - auto_abrupt_base) / auto_abrupt_base) < 0.05:
-            print("  H0 supported: OnlineNormalizer provides minimal additional benefit")
+            print("  H0 supported: EMANormalizer provides minimal additional benefit")
             print("  (Autostep's v_i provides sufficient scale invariance)")
         else:
             if auto_abrupt_norm < auto_abrupt_base:
-                print("  H1 supported: OnlineNormalizer provides additional benefit")
+                print("  H1 supported: EMANormalizer provides additional benefit")
                 print("  (faster adaptation during scale transients)")
             else:
-                print("  H0 partially supported: OnlineNormalizer may interfere with v_i")
+                print("  H0 partially supported: EMANormalizer may interfere with v_i")
 
         # Save plots if output_dir provided and matplotlib available
         if output_dir:
@@ -440,7 +440,7 @@ def main(output_dir: str | None = None, num_seeds: int = 30):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="External Normalization Study: OnlineNormalizer vs IDBD/Autostep"
+        description="External Normalization Study: EMANormalizer vs IDBD/Autostep"
     )
     parser.add_argument(
         "--output-dir",

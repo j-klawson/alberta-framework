@@ -14,7 +14,12 @@ from jax import Array
 from jaxtyping import Float
 
 from alberta_framework.core.initializers import sparse_init
-from alberta_framework.core.normalizers import NormalizerState, OnlineNormalizer
+from alberta_framework.core.normalizers import (
+    EMANormalizer,
+    EMANormalizerState,
+    Normalizer,
+    WelfordNormalizerState,
+)
 from alberta_framework.core.optimizers import LMS, TDIDBD, Optimizer, TDOptimizer
 from alberta_framework.core.types import (
     AutostepState,
@@ -81,7 +86,7 @@ class NormalizedLearnerState:
     """
 
     learner_state: LearnerState
-    normalizer_state: NormalizerState
+    normalizer_state: EMANormalizerState | WelfordNormalizerState
 
 
 @chex.dataclass(frozen=True)
@@ -428,16 +433,18 @@ class NormalizedLinearLearner:
     def __init__(
         self,
         optimizer: AnyOptimizer | None = None,
-        normalizer: OnlineNormalizer | None = None,
+        normalizer: (
+            Normalizer[EMANormalizerState] | Normalizer[WelfordNormalizerState] | None
+        ) = None,
     ):
         """Initialize the normalized linear learner.
 
         Args:
             optimizer: Optimizer for weight updates. Defaults to LMS(0.01)
-            normalizer: Feature normalizer. Defaults to OnlineNormalizer()
+            normalizer: Feature normalizer. Defaults to EMANormalizer()
         """
         self._learner = LinearLearner(optimizer=optimizer or LMS(step_size=0.01))
-        self._normalizer = normalizer or OnlineNormalizer()
+        self._normalizer = normalizer or EMANormalizer()
 
     def init(self, feature_dim: int) -> NormalizedLearnerState:
         """Initialize normalized learner state.
