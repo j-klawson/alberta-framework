@@ -91,7 +91,7 @@ from alberta_framework import Autostep
 optimizer = Autostep(
     initial_step_size=0.01,
     meta_step_size=0.01,
-    normalizer_decay=0.99,
+    tau=10000.0,
 )
 ```
 
@@ -101,7 +101,7 @@ optimizer = Autostep(
 |-----------|-------------|---------------|
 | `initial_step_size` | Starting value for per-weight step-sizes | 0.001 - 0.1 |
 | `meta_step_size` | Learning rate for adaptation (\(\mu\)) | 0.001 - 0.1 |
-| `normalizer_decay` | Decay for gradient normalizers (\(\tau\)) | 0.9 - 0.999 |
+| `tau` | Time constant for normalizer adaptation | 1000 - 100000 |
 
 ### Reference
 

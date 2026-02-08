@@ -997,7 +997,7 @@ class MLPLearner:
         new_opt_states = []
         for j in range(len(new_traces)):
             step, new_opt = self._optimizer.update_from_gradient(
-                state.optimizer_states[j], new_traces[j]
+                state.optimizer_states[j], new_traces[j], error=error
             )
             all_steps.append(step)
             new_opt_states.append(new_opt)

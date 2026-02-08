@@ -274,7 +274,7 @@ class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, Autostep
         )
 
     def update_from_gradient(
-        self, state: Any, gradient: Array
+        self, state: Any, gradient: Array, error: Array | None = None
     ) -> tuple[Array, Any]:
         """Compute step delta from pre-computed gradient.
 
@@ -288,6 +288,9 @@ class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, Autostep
         Args:
             state: Current optimizer state
             gradient: Pre-computed gradient (e.g. eligibility trace)
+            error: Optional prediction error scalar. Optimizers with
+                meta-learning (e.g. Autostep) use this for meta-gradient
+                computation. LMS ignores it.
 
         Returns:
             ``(step, new_state)`` where step has the same shape as gradient
@@ -341,17 +344,19 @@ class LMS(Optimizer[LMSState]):
         return LMSState(step_size=jnp.array(self._step_size, dtype=jnp.float32))
 
     def update_from_gradient(
-        self, state: LMSState, gradient: Array
+        self, state: LMSState, gradient: Array, error: Array | None = None
     ) -> tuple[Array, LMSState]:
         """Compute step from gradient: ``step = alpha * gradient``.
 
         Args:
             state: Current LMS state
             gradient: Pre-computed gradient (any shape)
+            error: Unused by LMS (accepted for interface compatibility)
 
         Returns:
             ``(step, state)`` -- state is unchanged for LMS
         """
+        del error  # LMS doesn't meta-learn
         return state.step_size * gradient, state
 
     def update(
@@ -448,12 +453,13 @@ class IDBD(Optimizer[IDBDState]):
     ) -> OptimizerUpdate:
         """Compute IDBD weight update with adaptive step-sizes.
 
-        The IDBD algorithm:
+        Following Sutton 1992, Figure 2, the operation ordering is:
 
-        1. Compute step-sizes: ``alpha_i = exp(log_alpha_i)``
-        2. Update weights: ``w_i += alpha_i * error * x_i``
-        3. Update log step-sizes: ``log_alpha_i += beta * error * x_i * h_i``
+        1. Meta-update: ``log_alpha_i += beta * error * x_i * h_i`` (using OLD traces)
+        2. Compute NEW step-sizes: ``alpha_i = exp(log_alpha_i)``
+        3. Update weights: ``w_i += alpha_i * error * x_i`` (using NEW alpha)
         4. Update traces: ``h_i = h_i * max(0, 1 - alpha_i * x_i^2) + alpha_i * error * x_i``
+           (using NEW alpha)
 
         The trace h_i tracks the correlation between current and past gradients.
         When gradients consistently point the same direction, h_i grows,
@@ -470,37 +476,33 @@ class IDBD(Optimizer[IDBDState]):
         error_scalar = jnp.squeeze(error)
         beta = state.meta_step_size
 
-        # Current step-sizes (exponentiate log values)
-        alphas = jnp.exp(state.log_step_sizes)
-
-        # Weight updates: alpha_i * error * x_i
-        weight_delta = alphas * error_scalar * observation
-
-        # Meta-update: adapt step-sizes based on gradient correlation
-        # log_alpha_i += beta * error * x_i * h_i
+        # 1. Meta-update: adapt step-sizes using OLD traces
         gradient_correlation = error_scalar * observation * state.traces
         new_log_step_sizes = state.log_step_sizes + beta * gradient_correlation
 
         # Clip log step-sizes to prevent numerical issues
         new_log_step_sizes = jnp.clip(new_log_step_sizes, -10.0, 2.0)
 
-        # Update traces: h_i = h_i * decay + alpha_i * error * x_i
+        # 2. Compute NEW step-sizes
+        new_alphas = jnp.exp(new_log_step_sizes)
+
+        # 3. Weight updates using NEW alpha: alpha_i * error * x_i
+        weight_delta = new_alphas * error_scalar * observation
+
+        # 4. Update traces using NEW alpha: h_i = h_i * decay + alpha_i * error * x_i
         # decay = max(0, 1 - alpha_i * x_i^2)
-        decay = jnp.maximum(0.0, 1.0 - alphas * observation**2)
-        new_traces = state.traces * decay + alphas * error_scalar * observation
+        decay = jnp.maximum(0.0, 1.0 - new_alphas * observation**2)
+        new_traces = state.traces * decay + new_alphas * error_scalar * observation
 
-        # Bias updates (similar logic but scalar)
-        bias_alpha = state.bias_step_size
-        bias_delta = bias_alpha * error_scalar
-
-        # Update bias step-size
+        # Bias updates (same ordering: meta-update first, then new alpha)
         bias_gradient_correlation = error_scalar * state.bias_trace
-        new_bias_step_size = bias_alpha * jnp.exp(beta * bias_gradient_correlation)
+        new_bias_step_size = state.bias_step_size * jnp.exp(beta * bias_gradient_correlation)
         new_bias_step_size = jnp.clip(new_bias_step_size, 1e-6, 1.0)
 
-        # Update bias trace
-        bias_decay = jnp.maximum(0.0, 1.0 - bias_alpha)
-        new_bias_trace = state.bias_trace * bias_decay + bias_alpha * error_scalar
+        bias_delta = new_bias_step_size * error_scalar
+
+        bias_decay = jnp.maximum(0.0, 1.0 - new_bias_step_size)
+        new_bias_trace = state.bias_trace * bias_decay + new_bias_step_size * error_scalar
 
         new_state = IDBDState(
             log_step_sizes=new_log_step_sizes,
@@ -515,9 +517,9 @@ class IDBD(Optimizer[IDBDState]):
             bias_delta=bias_delta,
             new_state=new_state,
             metrics={
-                "mean_step_size": jnp.mean(alphas),
-                "min_step_size": jnp.min(alphas),
-                "max_step_size": jnp.max(alphas),
+                "mean_step_size": jnp.mean(new_alphas),
+                "min_step_size": jnp.min(new_alphas),
+                "max_step_size": jnp.max(new_alphas),
             },
         )
 
@@ -525,15 +527,22 @@ class IDBD(Optimizer[IDBDState]):
 class Autostep(Optimizer[AutostepState]):
     """Autostep optimizer with tuning-free step-size adaptation.
 
-    Autostep normalizes gradients to prevent large updates and adapts
-    per-weight step-sizes based on gradient correlation. The key innovation
-    is automatic normalization that makes the algorithm robust to different
-    feature scales.
+    Implements the exact algorithm from Mahmood et al. 2012, Table 1.
 
-    The algorithm maintains:
-    - Per-weight step-sizes that adapt based on gradient correlation
-    - Running max of absolute gradients for normalization
-    - Traces for detecting consistent gradient directions
+    The algorithm maintains per-weight step-sizes that adapt based on
+    meta-gradient correlation. The key innovations are:
+    - Self-regulated normalizers (v_i) that track meta-gradient magnitude
+      ``|delta * x_i * h_i|`` for stable meta-updates
+    - Overshoot prevention via effective step-size normalization
+      ``M = max(sum(alpha_i * x_i^2), 1)``
+
+    Per-sample update (Table 1):
+
+    1. ``v_i = max(|delta*x_i*h_i|, v_i + (1/tau)*alpha_i*x_i^2*(|delta*x_i*h_i| - v_i))``
+    2. ``alpha_i *= exp(mu * delta*x_i*h_i / v_i)`` where ``v_i > 0``
+    3. ``M = max(sum(alpha_i * x_i^2), 1)``; ``alpha_i /= M``
+    4. ``w_i += alpha_i * delta * x_i`` (weight update with NEW alpha)
+    5. ``h_i = h_i * (1 - alpha_i * x_i^2) + alpha_i * delta * x_i`` (trace update)
 
     Reference: Mahmood, A.R., Sutton, R.S., Degris, T., & Pilarski, P.M. (2012).
     "Tuning-free step-size adaptation"
@@ -541,28 +550,31 @@ class Autostep(Optimizer[AutostepState]):
     Attributes:
         initial_step_size: Initial per-weight step-size
         meta_step_size: Meta learning rate mu for adapting step-sizes
-        normalizer_decay: Decay factor tau for gradient normalizers
+        tau: Time constant for normalizer adaptation (default: 10000)
     """
 
     def __init__(
         self,
         initial_step_size: float = 0.01,
         meta_step_size: float = 0.01,
-        normalizer_decay: float = 0.99,
+        tau: float = 10000.0,
     ):
         """Initialize Autostep optimizer.
 
         Args:
             initial_step_size: Initial value for per-weight step-sizes
             meta_step_size: Meta learning rate for adapting step-sizes
-            normalizer_decay: Decay factor for gradient normalizers (higher = slower decay)
+            tau: Time constant for normalizer adaptation (default: 10000).
+                Higher values mean slower normalizer decay.
         """
         self._initial_step_size = initial_step_size
         self._meta_step_size = meta_step_size
-        self._normalizer_decay = normalizer_decay
+        self._tau = tau
 
     def init(self, feature_dim: int) -> AutostepState:
         """Initialize Autostep state.
+
+        Normalizers (v_i) and traces (h_i) are initialized to 0 per the paper.
 
         Args:
             feature_dim: Dimension of weight vector
@@ -573,12 +585,12 @@ class Autostep(Optimizer[AutostepState]):
         return AutostepState(
             step_sizes=jnp.full(feature_dim, self._initial_step_size, dtype=jnp.float32),
             traces=jnp.zeros(feature_dim, dtype=jnp.float32),
-            normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
+            normalizers=jnp.zeros(feature_dim, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
-            normalizer_decay=jnp.array(self._normalizer_decay, dtype=jnp.float32),
+            tau=jnp.array(self._tau, dtype=jnp.float32),
             bias_step_size=jnp.array(self._initial_step_size, dtype=jnp.float32),
             bias_trace=jnp.array(0.0, dtype=jnp.float32),
-            bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
+            bias_normalizer=jnp.array(0.0, dtype=jnp.float32),
         )
 
     def init_for_shape(self, shape: tuple[int, ...]) -> AutostepParamState:
@@ -593,59 +605,92 @@ class Autostep(Optimizer[AutostepState]):
         return AutostepParamState(
             step_sizes=jnp.full(shape, self._initial_step_size, dtype=jnp.float32),
             traces=jnp.zeros(shape, dtype=jnp.float32),
-            normalizers=jnp.ones(shape, dtype=jnp.float32),
+            normalizers=jnp.zeros(shape, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
-            normalizer_decay=jnp.array(self._normalizer_decay, dtype=jnp.float32),
+            tau=jnp.array(self._tau, dtype=jnp.float32),
         )
 
     def update_from_gradient(
-        self, state: AutostepParamState, gradient: Array
+        self,
+        state: AutostepParamState,
+        gradient: Array,
+        error: Array | None = None,
     ) -> tuple[Array, AutostepParamState]:
-        """Compute Autostep update from pre-computed gradient.
+        """Compute Autostep update from pre-computed gradient (MLP path).
 
-        Runs the same element-wise algorithm as ``update``, but operates
-        on arbitrary-shape arrays (works on 1D vectors, 2D matrices, etc.).
+        Implements the Table 1 algorithm generalized for arbitrary-shape
+        parameters, where ``gradient`` plays the role of the eligibility
+        trace ``z`` (prediction gradient).
 
-        The returned step does NOT include the error -- call as:
-        ``step, new_state = optimizer.update_from_gradient(state, trace)``
-        then apply: ``param += scale * error * step``
+        When ``error`` is provided, the full paper algorithm is used:
+        meta-gradient is ``error * z * h``. When ``error`` is None,
+        falls back to error-free approximation (``z * h``).
+
+        The returned step does NOT include the error -- the caller applies
+        ``param += error * step`` after optional bounding.
 
         Args:
             state: Current Autostep param state
-            gradient: Pre-computed gradient (same shape as state arrays)
+            gradient: Pre-computed gradient / eligibility trace (same shape as state arrays)
+            error: Optional prediction error scalar. When provided, enables
+                the full paper algorithm with error-scaled meta-gradients.
 
         Returns:
             ``(step, new_state)`` where step has the same shape as gradient
         """
         mu = state.meta_step_size
-        tau = state.normalizer_decay
+        tau = state.tau
 
-        # Normalize gradient using running max
-        abs_gradient = jnp.abs(gradient)
-        normalizer = jnp.maximum(abs_gradient, state.normalizers)
-        normalized_gradient = gradient / (normalizer + 1e-8)
+        z = gradient  # eligibility trace
+        z_sq = z**2
 
-        # Compute step using normalized gradient
-        step = state.step_sizes * normalized_gradient
+        # Compute meta-gradient: δ*z*h (or z*h if error is None)
+        if error is not None:
+            error_scalar = jnp.squeeze(error)
+            meta_gradient = error_scalar * z * state.traces
+        else:
+            meta_gradient = z * state.traces
 
-        # Update step-sizes based on gradient correlation
-        gradient_correlation = normalized_gradient * state.traces
-        new_step_sizes = state.step_sizes * jnp.exp(mu * gradient_correlation)
+        abs_meta_gradient = jnp.abs(meta_gradient)
+
+        # Eq. 4: v_i = max(|meta_grad|, v_i + (1/τ)*α_i*z_i²*(|meta_grad| - v_i))
+        v_update = state.normalizers + (1.0 / tau) * state.step_sizes * z_sq * (
+            abs_meta_gradient - state.normalizers
+        )
+        new_normalizers = jnp.maximum(abs_meta_gradient, v_update)
+
+        # Eq. 5: α_i *= exp(μ * meta_grad / v_i) where v_i > 0
+        safe_v = jnp.maximum(new_normalizers, 1e-38)
+        new_step_sizes = jnp.where(
+            new_normalizers > 0,
+            state.step_sizes * jnp.exp(mu * meta_gradient / safe_v),
+            state.step_sizes,
+        )
+
+        # Eq. 6-7: M = max(Σ α_i*z_i², 1); α_i /= M
+        effective_step = jnp.sum(new_step_sizes * z_sq)
+        m_factor = jnp.maximum(effective_step, 1.0)
+        new_step_sizes = new_step_sizes / m_factor
+
+        # Clip step-sizes for numerical safety
         new_step_sizes = jnp.clip(new_step_sizes, 1e-8, 1.0)
 
-        # Update traces with decay based on step-size
-        trace_decay = 1.0 - state.step_sizes
-        new_traces = state.traces * trace_decay + state.step_sizes * normalized_gradient
+        # Compute step: α_i * z_i (error applied externally)
+        step = new_step_sizes * z
 
-        # Update normalizers with decay
-        new_normalizers = jnp.maximum(abs_gradient, state.normalizers * tau)
+        # Trace update: h_i = h_i*(1 - α_i*z_i²) + α_i*δ*z_i
+        trace_decay = 1.0 - new_step_sizes * z_sq
+        if error is not None:
+            new_traces = state.traces * trace_decay + new_step_sizes * error_scalar * z
+        else:
+            new_traces = state.traces * trace_decay + new_step_sizes * z
 
         new_state = AutostepParamState(
             step_sizes=new_step_sizes,
             traces=new_traces,
             normalizers=new_normalizers,
             meta_step_size=mu,
-            normalizer_decay=tau,
+            tau=tau,
         )
 
         return step, new_state
@@ -656,16 +701,15 @@ class Autostep(Optimizer[AutostepState]):
         error: Array,
         observation: Array,
     ) -> OptimizerUpdate:
-        """Compute Autostep weight update with normalized gradients.
+        """Compute Autostep weight update following Mahmood et al. 2012, Table 1.
 
-        The Autostep algorithm:
+        The algorithm per sample:
 
-        1. Compute gradient: ``g_i = error * x_i``
-        2. Normalize gradient: ``g_i' = g_i / max(|g_i|, v_i)``
-        3. Update weights: ``w_i += alpha_i * g_i'``
-        4. Update step-sizes: ``alpha_i *= exp(mu * g_i' * h_i)``
-        5. Update traces: ``h_i = h_i * (1 - alpha_i) + alpha_i * g_i'``
-        6. Update normalizers: ``v_i = max(|g_i|, v_i * tau)``
+        1. Eq. 4: ``v_i = max(|δ*x_i*h_i|, v_i + (1/τ)*α_i*x_i²*(|δ*x_i*h_i| - v_i))``
+        2. Eq. 5: ``α_i *= exp(μ * δ*x_i*h_i / v_i)`` where ``v_i > 0``
+        3. Eq. 6-7: ``M = max(Σ α_i*x_i² + α_bias, 1)``; ``α_i /= M``, ``α_bias /= M``
+        4. Weight update: ``w_i += α_i * δ * x_i`` (with NEW alpha)
+        5. Trace update: ``h_i = h_i*(1 - α_i*x_i²) + α_i*δ*x_i``
 
         Args:
             state: Current Autostep state
@@ -677,58 +721,80 @@ class Autostep(Optimizer[AutostepState]):
         """
         error_scalar = jnp.squeeze(error)
         mu = state.meta_step_size
-        tau = state.normalizer_decay
+        tau = state.tau
 
-        # Compute raw gradient
-        gradient = error_scalar * observation
+        x = observation
+        x_sq = x**2
 
-        # Normalize gradient using running max
-        abs_gradient = jnp.abs(gradient)
-        normalizer = jnp.maximum(abs_gradient, state.normalizers)
-        normalized_gradient = gradient / (normalizer + 1e-8)
+        # --- Weights ---
+        # Meta-gradient: δ*x_i*h_i
+        meta_gradient = error_scalar * x * state.traces
+        abs_meta_gradient = jnp.abs(meta_gradient)
 
-        # Compute weight delta using normalized gradient
-        weight_delta = state.step_sizes * normalized_gradient
+        # Eq. 4: v_i update (self-regulated EMA)
+        v_update = state.normalizers + (1.0 / tau) * state.step_sizes * x_sq * (
+            abs_meta_gradient - state.normalizers
+        )
+        new_normalizers = jnp.maximum(abs_meta_gradient, v_update)
 
-        # Update step-sizes based on gradient correlation
-        gradient_correlation = normalized_gradient * state.traces
-        new_step_sizes = state.step_sizes * jnp.exp(mu * gradient_correlation)
-
-        # Clip step-sizes to prevent instability
-        new_step_sizes = jnp.clip(new_step_sizes, 1e-8, 1.0)
-
-        # Update traces with decay based on step-size
-        trace_decay = 1.0 - state.step_sizes
-        new_traces = state.traces * trace_decay + state.step_sizes * normalized_gradient
-
-        # Update normalizers with decay
-        new_normalizers = jnp.maximum(abs_gradient, state.normalizers * tau)
-
-        # Bias updates (similar logic)
-        bias_gradient = error_scalar
-        abs_bias_gradient = jnp.abs(bias_gradient)
-        bias_normalizer = jnp.maximum(abs_bias_gradient, state.bias_normalizer)
-        normalized_bias_gradient = bias_gradient / (bias_normalizer + 1e-8)
-
-        bias_delta = state.bias_step_size * normalized_bias_gradient
-
-        bias_correlation = normalized_bias_gradient * state.bias_trace
-        new_bias_step_size = state.bias_step_size * jnp.exp(mu * bias_correlation)
-        new_bias_step_size = jnp.clip(new_bias_step_size, 1e-8, 1.0)
-
-        bias_trace_decay = 1.0 - state.bias_step_size
-        new_bias_trace = (
-            state.bias_trace * bias_trace_decay + state.bias_step_size * normalized_bias_gradient
+        # Eq. 5: α_i *= exp(μ * meta_grad / v_i) where v_i > 0
+        safe_v = jnp.maximum(new_normalizers, 1e-38)
+        new_step_sizes = jnp.where(
+            new_normalizers > 0,
+            state.step_sizes * jnp.exp(mu * meta_gradient / safe_v),
+            state.step_sizes,
         )
 
-        new_bias_normalizer = jnp.maximum(abs_bias_gradient, state.bias_normalizer * tau)
+        # --- Bias ---
+        # Meta-gradient for bias (implicit x=1): δ*h_bias
+        bias_meta_gradient = error_scalar * state.bias_trace
+        abs_bias_meta_gradient = jnp.abs(bias_meta_gradient)
+
+        # Eq. 4 for bias
+        bias_v_update = state.bias_normalizer + (1.0 / tau) * state.bias_step_size * (
+            abs_bias_meta_gradient - state.bias_normalizer
+        )
+        new_bias_normalizer = jnp.maximum(abs_bias_meta_gradient, bias_v_update)
+
+        # Eq. 5 for bias
+        safe_bias_v = jnp.maximum(new_bias_normalizer, 1e-38)
+        new_bias_step_size = jnp.where(
+            new_bias_normalizer > 0,
+            state.bias_step_size * jnp.exp(mu * bias_meta_gradient / safe_bias_v),
+            state.bias_step_size,
+        )
+
+        # Eq. 6-7: Overshoot prevention (joint over weights + bias)
+        # M = max(Σ α_i*x_i² + α_bias*1², 1)
+        effective_step = jnp.sum(new_step_sizes * x_sq) + new_bias_step_size
+        m_factor = jnp.maximum(effective_step, 1.0)
+        new_step_sizes = new_step_sizes / m_factor
+        new_bias_step_size = new_bias_step_size / m_factor
+
+        # Clip step-sizes for numerical safety
+        new_step_sizes = jnp.clip(new_step_sizes, 1e-8, 1.0)
+        new_bias_step_size = jnp.clip(new_bias_step_size, 1e-8, 1.0)
+
+        # Weight update with NEW alpha: α_i * δ * x_i
+        weight_delta = new_step_sizes * error_scalar * x
+
+        # Bias update: α_bias * δ
+        bias_delta = new_bias_step_size * error_scalar
+
+        # Trace update: h_i = h_i*(1 - α_i*x_i²) + α_i*δ*x_i
+        trace_decay = 1.0 - new_step_sizes * x_sq
+        new_traces = state.traces * trace_decay + new_step_sizes * error_scalar * x
+
+        # Bias trace: h_bias = h_bias*(1 - α_bias) + α_bias*δ
+        bias_trace_decay = 1.0 - new_bias_step_size
+        new_bias_trace = state.bias_trace * bias_trace_decay + new_bias_step_size * error_scalar
 
         new_state = AutostepState(
             step_sizes=new_step_sizes,
             traces=new_traces,
             normalizers=new_normalizers,
             meta_step_size=mu,
-            normalizer_decay=tau,
+            tau=tau,
             bias_step_size=new_bias_step_size,
             bias_trace=new_bias_trace,
             bias_normalizer=new_bias_normalizer,
@@ -739,10 +805,10 @@ class Autostep(Optimizer[AutostepState]):
             bias_delta=bias_delta,
             new_state=new_state,
             metrics={
-                "mean_step_size": jnp.mean(state.step_sizes),
-                "min_step_size": jnp.min(state.step_sizes),
-                "max_step_size": jnp.max(state.step_sizes),
-                "mean_normalizer": jnp.mean(state.normalizers),
+                "mean_step_size": jnp.mean(new_step_sizes),
+                "min_step_size": jnp.min(new_step_sizes),
+                "max_step_size": jnp.max(new_step_sizes),
+                "mean_normalizer": jnp.mean(new_normalizers),
             },
         )
 

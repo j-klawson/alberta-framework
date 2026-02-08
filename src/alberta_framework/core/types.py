@@ -74,28 +74,28 @@ class IDBDState:
 class AutostepState:
     """State for the Autostep optimizer.
 
-    Autostep is a tuning-free step-size adaptation algorithm that normalizes
-    gradients to prevent large updates and adapts step-sizes based on
-    gradient correlation.
+    Autostep is a tuning-free step-size adaptation algorithm that adapts
+    per-weight step-sizes based on meta-gradient correlation, with
+    self-regulated normalizers to stabilize the meta-update.
 
-    Reference: Mahmood et al. 2012, "Tuning-free step-size adaptation"
+    Reference: Mahmood et al. 2012, "Tuning-free step-size adaptation", Table 1
 
     Attributes:
         step_sizes: Per-weight step-sizes (alpha_i)
         traces: Per-weight traces for gradient correlation (h_i)
-        normalizers: Running max absolute gradient per weight (v_i)
+        normalizers: Running normalizer of meta-gradient magnitude |delta*x*h| (v_i)
         meta_step_size: Meta learning rate mu for adapting step-sizes
-        normalizer_decay: Decay factor for the normalizer (tau)
+        tau: Time constant for normalizer adaptation (higher = slower decay)
         bias_step_size: Step-size for the bias term
         bias_trace: Trace for the bias term
-        bias_normalizer: Normalizer for the bias gradient
+        bias_normalizer: Normalizer for the bias meta-gradient
     """
 
     step_sizes: Float[Array, " feature_dim"]  # alpha_i
     traces: Float[Array, " feature_dim"]  # h_i
-    normalizers: Float[Array, " feature_dim"]  # v_i: running max of |gradient|
+    normalizers: Float[Array, " feature_dim"]  # v_i: running normalizer of |δ*x*h|
     meta_step_size: Float[Array, ""]  # mu
-    normalizer_decay: Float[Array, ""]  # tau
+    tau: Float[Array, ""]  # time constant for normalizer
     bias_step_size: Float[Array, ""]
     bias_trace: Float[Array, ""]
     bias_normalizer: Float[Array, ""]
@@ -113,16 +113,16 @@ class AutostepParamState:
     Attributes:
         step_sizes: Per-element step-sizes, same shape as the parameter
         traces: Per-element traces for gradient correlation
-        normalizers: Running max absolute gradient per element
+        normalizers: Running normalizer of meta-gradient magnitude |delta*z*h|
         meta_step_size: Meta learning rate mu
-        normalizer_decay: Decay factor tau for normalizers
+        tau: Time constant for normalizer adaptation
     """
 
     step_sizes: Array  # same shape as the parameter
     traces: Array  # same shape as the parameter
     normalizers: Array  # same shape as the parameter
     meta_step_size: Float[Array, ""]
-    normalizer_decay: Float[Array, ""]
+    tau: Float[Array, ""]
 
 
 @chex.dataclass(frozen=True)
@@ -494,7 +494,7 @@ def create_autostep_state(
     feature_dim: int,
     initial_step_size: float = 0.01,
     meta_step_size: float = 0.01,
-    normalizer_decay: float = 0.99,
+    tau: float = 10000.0,
 ) -> AutostepState:
     """Create initial Autostep optimizer state.
 
@@ -502,7 +502,7 @@ def create_autostep_state(
         feature_dim: Dimension of the feature vector
         initial_step_size: Initial per-weight step-size
         meta_step_size: Meta learning rate for adapting step-sizes
-        normalizer_decay: Decay factor for gradient normalizers
+        tau: Time constant for normalizer adaptation (default: 10000)
 
     Returns:
         Initial Autostep state
@@ -510,12 +510,12 @@ def create_autostep_state(
     return AutostepState(
         step_sizes=jnp.full(feature_dim, initial_step_size, dtype=jnp.float32),
         traces=jnp.zeros(feature_dim, dtype=jnp.float32),
-        normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
+        normalizers=jnp.zeros(feature_dim, dtype=jnp.float32),
         meta_step_size=jnp.array(meta_step_size, dtype=jnp.float32),
-        normalizer_decay=jnp.array(normalizer_decay, dtype=jnp.float32),
+        tau=jnp.array(tau, dtype=jnp.float32),
         bias_step_size=jnp.array(initial_step_size, dtype=jnp.float32),
         bias_trace=jnp.array(0.0, dtype=jnp.float32),
-        bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
+        bias_normalizer=jnp.array(0.0, dtype=jnp.float32),
     )
 
 

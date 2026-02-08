@@ -126,24 +126,30 @@ Fixed step-size baseline optimizer:
 - Simple but requires manual tuning of step-size
 
 ### IDBD (Incremental Delta-Bar-Delta)
-Reference: Sutton 1992, "Adapting Bias by Gradient Descent"
+Reference: Sutton 1992, "Adapting Bias by Gradient Descent", Figure 2
 
-Per-weight adaptive step-sizes based on gradient correlation:
-1. `alpha_i = exp(log_alpha_i)` — per-weight step-sizes
-2. `w_i += alpha_i * error * x_i` — weight update
-3. `log_alpha_i += beta * error * x_i * h_i` — meta-update
-4. `h_i = h_i * max(0, 1 - alpha_i * x_i^2) + alpha_i * error * x_i` — trace update
+Per-weight adaptive step-sizes based on gradient correlation. Operation ordering follows the paper (meta-update first, new alpha for weight/trace):
+1. `log_alpha_i += beta * error * x_i * h_i` — meta-update (using OLD traces)
+2. `alpha_i = exp(log_alpha_i)` — compute NEW step-sizes
+3. `w_i += alpha_i * error * x_i` — weight update (using NEW alpha)
+4. `h_i = h_i * max(0, 1 - alpha_i * x_i^2) + alpha_i * error * x_i` — trace update (using NEW alpha)
 
 ### Autostep
-Reference: Mahmood et al. 2012, "Tuning-free step-size adaptation"
+Reference: Mahmood et al. 2012, "Tuning-free step-size adaptation", Table 1
 
-Per-weight adaptive step-sizes with gradient normalization:
-1. `g_i = error * x_i` — compute gradient
-2. `g_i' = g_i / max(|g_i|, v_i)` — normalize gradient
-3. `w_i += alpha_i * g_i'` — weight update with normalized gradient
-4. `alpha_i *= exp(mu * g_i' * h_i)` — adapt step-size
-5. `h_i = h_i * (1 - alpha_i) + alpha_i * g_i'` — update trace
-6. `v_i = max(|g_i|, v_i * tau)` — update normalizer
+Per-weight adaptive step-sizes with self-regulated normalizers and overshoot prevention:
+1. Eq. 4: `v_i = max(|δ*x_i*h_i|, v_i + (1/τ)*α_i*x_i²*(|δ*x_i*h_i| - v_i))` — normalizer tracks meta-gradient magnitude
+2. Eq. 5: `α_i *= exp(μ * δ*x_i*h_i / v_i)` where `v_i > 0` — meta-update with normalized meta-gradient
+3. Eq. 6-7: `M = max(Σ α_i*x_i², 1)`; `α_i /= M` — overshoot prevention
+4. `w_i += α_i * δ * x_i` — weight update (with NEW alpha, after M-normalization)
+5. `h_i = h_i*(1 - α_i*x_i²) + α_i*δ*x_i` — trace update (decay includes x²)
+
+Key differences from a naive implementation:
+- `v_i` normalizes the *meta-gradient* `|δ*x*h|`, not the primary gradient `|δ*x|`
+- `v_i` uses self-regulated EMA (Eq. 4), not simple `max(|grad|, v*τ)`
+- Normalization only applies to the meta-update, NOT to weight/trace updates
+- `τ` is a time constant (default 10000), not a multiplicative decay factor
+- `v_i` and `h_i` are initialized to 0 (first step: no meta-update, no normalizer update)
 
 ### Online Normalization
 Streaming feature normalization following the Alberta Plan:
@@ -595,6 +601,22 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.7.2 (2026-02-08)
+- **FIX**: IDBD operation ordering now matches Sutton 1992 Figure 2: meta-update first, then NEW alpha for weight and trace updates
+- **BREAKING**: Autostep rewritten to match Mahmood et al. 2012 Table 1 exactly:
+  - `v_i` now tracks meta-gradient magnitude `|δ*x*h|` (was primary gradient `|δ*x|`)
+  - `v_i` uses self-regulated EMA (Eq. 4), not `max(|grad|, v*τ)`
+  - Overshoot prevention via `M = max(Σ α_i*x_i², 1)` (Eq. 6-7)
+  - Trace decay includes `x²`: `h_i = h_i*(1 - α_i*x_i²) + α_i*δ*x_i`
+  - Normalizers and traces initialized to 0 (was 1 and 0)
+  - Normalization only applies to meta-update, not to weight/trace updates
+- **BREAKING**: `Autostep(normalizer_decay=...)` renamed to `Autostep(tau=...)`, default changed from 0.99 to 10000.0
+- **BREAKING**: `AutostepState.normalizer_decay` renamed to `AutostepState.tau`
+- **BREAKING**: `AutostepParamState.normalizer_decay` renamed to `AutostepParamState.tau`
+- **FEATURE**: `Autostep.update_from_gradient()` now accepts optional `error` parameter for full paper algorithm in MLP path
+- **FEATURE**: `Optimizer.update_from_gradient()` base signature accepts optional `error` parameter
+- **DOCS**: Updated CLAUDE.md algorithm descriptions for IDBD and Autostep
 
 ### v0.7.1 (2026-02-07)
 - **FEATURE**: `AGCBounding` — Adaptive Gradient Clipping (Brock et al. 2021) as a `Bounder` ABC, per-unit clipping scaled by weight norm

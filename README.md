@@ -5,9 +5,10 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 
+> **Warning:** This framework is under active research development. The API is unstable and subject to breaking changes between releases. It is not intended for production use.
+
 A JAX-based research framework implementing components of [The Alberta Plan for AI Research](https://arxiv.org/abs/2208.11173) in the pursuit of building the foundations of Continual AI.
 
-> **Warning:** This framework is under active research development. The API is unstable and subject to breaking changes between releases. It is not intended for production use.
 
 > "The agents are complex only because they interact with a complex world... their initial design is as simple, general, and scalable as possible." — *Sutton et al., 2022*
 
@@ -17,15 +18,17 @@ The Alberta Framework provides foundational components for continual reinforceme
 
 ## Project Context
 
-This framework is developed as part of my D.Eng. work focusing on the foundations of Continual AI. For more background and context see:
+This framework is developed as part of my D.Eng. work focusing on the foundations of online, continuious Reinforcement Learning (RL). For more background and context see:
 
 * **Research Blog**: [blog.9600baud.net](https://blog.9600baud.net)
 * **Replicating Sutton '92**: [The Foundation of Step-size Adaptation](https://blog.9600baud.net/sutton92.html)
+* **Effects of normalizing input data**: [Demonstrating Adaptive Step-Size Algorithm Needs External Normalization](https://blog.9600baud.net/autostep-normalization.html)
+* **Notes on JAX performance**: [JAX Performance: From 63 Minutes to 2 Minutes](https://blog.9600baud.net/jax-performance.html)
 * **About the Author**: [Keith Lawson](https://blog.9600baud.net/about.html)
 
 ### Roadmap
 
-Depending on my research trajectory I may or may not implement components required for the plan. The current focus of this framework is the Step 1 Baseline Study, investigating the interaction between adaptive optimizers and online normalization.
+Depending on my research trajectory I may or may not implement components required for the Alberta Plan. The current focus of this framework is the Step 1 Baseline Study, investigating the interaction between adaptive optimizers and online normalization.
 
 | Step | Focus | Status |
 |------|-------|--------|
@@ -52,16 +55,62 @@ pip install alberta-framework[dev]        # Development (pytest, ruff)
 
 ```python
 import jax.random as jr
-from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop
+from alberta_framework import (
+    LinearLearner, MLPLearner, LMS, IDBD, Autostep,
+    ObGDBounding, AGCBounding, EMANormalizer, WelfordNormalizer,
+    RandomWalkStream, run_learning_loop, run_mlp_learning_loop,
+)
 
-# Non-stationary stream where target weights drift over time
 stream = RandomWalkStream(feature_dim=10, drift_rate=0.001)
 
-# Learner with IDBD meta-learned step-sizes
+# --- Optimizers ---
+
+# Fixed step-size baseline
+learner = LinearLearner(optimizer=LMS(step_size=0.01))
+
+# IDBD: per-weight adaptive step-sizes via gradient correlation (Sutton, 1992)
 learner = LinearLearner(optimizer=IDBD())
 
-# JIT-compiled training via jax.lax.scan
+# Autostep: tuning-free adaptation with gradient normalization (Mahmood et al., 2012)
+learner = LinearLearner(optimizer=Autostep())
+
+# --- Adding a Normalizer ---
+
+# EMA normalization for non-stationary feature scales
+learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer(decay=0.99))
+
+# Welford normalization for stationary distributions
+learner = LinearLearner(optimizer=Autostep(), normalizer=WelfordNormalizer())
+
+# --- Adding a Bounder ---
+
+# ObGD bounding prevents overshooting (Elsayed et al., 2024)
+learner = LinearLearner(optimizer=Autostep(), bounder=ObGDBounding(kappa=2.0))
+
+# --- MLP Learner ---
+
+# MLP with Autostep + ObGD bounding + normalization
+mlp = MLPLearner(
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+
+# MLP with AGC bounding — per-unit clipping scaled by weight norm (Brock et al., 2021)
+mlp = MLPLearner(
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=AGCBounding(clip_factor=0.01),
+)
+
+# --- Training ---
+
+# Linear: JIT-compiled training via jax.lax.scan
 state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
+
+# MLP: same interface
+state, metrics = run_mlp_learning_loop(mlp, stream, num_steps=10000, key=jr.key(42))
 ```
 
 ## Core Components

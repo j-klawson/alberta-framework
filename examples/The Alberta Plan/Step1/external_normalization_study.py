@@ -62,7 +62,7 @@ IDBD_PARAMS = {
 AUTOSTEP_PARAMS = {
     "initial_step_size": 0.05,
     "meta_step_size": 0.05,
-    "normalizer_decay": 0.99,
+    "tau": 10000.0,
 }
 
 # EMANormalizer hyperparameters

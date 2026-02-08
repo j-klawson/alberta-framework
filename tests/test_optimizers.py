@@ -116,8 +116,10 @@ class TestAutostep:
         chex.assert_shape(state.normalizers, (10,))
         chex.assert_trees_all_close(state.step_sizes, jnp.full(10, 0.01))
         chex.assert_trees_all_close(state.traces, jnp.zeros(10))
-        chex.assert_trees_all_close(state.normalizers, jnp.ones(10))
+        # Normalizers init to 0 per Mahmood et al. 2012
+        chex.assert_trees_all_close(state.normalizers, jnp.zeros(10))
         assert state.meta_step_size == pytest.approx(0.001)
+        assert state.tau == pytest.approx(10000.0)
 
     def test_update_returns_correct_shapes(self, sample_observation):
         """Autostep update should return correctly shaped deltas."""
@@ -132,26 +134,28 @@ class TestAutostep:
         chex.assert_shape(result.new_state.traces, sample_observation.shape)
         chex.assert_shape(result.new_state.normalizers, sample_observation.shape)
 
-    def test_normalizers_adapt_to_gradient_magnitude(self):
-        """Normalizers should increase when gradients are large."""
+    def test_normalizers_adapt_to_meta_gradient_magnitude(self):
+        """Normalizers should track |δ*x*h| — needs 2+ steps since h starts at 0."""
         optimizer = Autostep(initial_step_size=0.1, meta_step_size=0.1)
         feature_dim = 5
         state = optimizer.init(feature_dim=feature_dim)
 
-        # Large observation should produce large gradients
         large_observation = jnp.ones(feature_dim) * 10.0
         error = jnp.array(1.0)
 
-        initial_normalizers = state.normalizers
+        # First step: h=0 so meta_gradient = δ*x*h = 0, v stays 0
+        result1 = optimizer.update(state, error, large_observation)
+        chex.assert_trees_all_close(result1.new_state.normalizers, jnp.zeros(feature_dim))
 
-        result = optimizer.update(state, error, large_observation)
+        # Second step: h is nonzero from first step, so meta_gradient > 0
+        result2 = optimizer.update(result1.new_state, error, large_observation)
 
-        # Normalizers should have increased to handle large gradients
+        # Normalizers should now be positive (tracking |δ*x*h|)
         chex.assert_trees_all_equal_comparator(
-            lambda x, y: jnp.all(x >= y),
-            lambda x, y: f"Expected {x} >= {y}",
-            result.new_state.normalizers,
-            initial_normalizers,
+            lambda x, y: jnp.all(x > y),
+            lambda x, y: f"Expected {x} > {y}",
+            result2.new_state.normalizers,
+            jnp.zeros(feature_dim),
         )
 
     def test_step_sizes_adapt_with_consistent_gradients(self):
@@ -187,6 +191,48 @@ class TestAutostep:
         assert "min_step_size" in result.metrics
         assert "max_step_size" in result.metrics
         assert "mean_normalizer" in result.metrics
+
+    def test_overshoot_prevention_bounds_effective_step_size(self):
+        """M normalization should prevent sum(alpha_i * x_i^2) from exceeding 1."""
+        # Use large step-sizes and large observations to trigger M > 1
+        optimizer = Autostep(initial_step_size=1.0, meta_step_size=0.1)
+        feature_dim = 10
+        state = optimizer.init(feature_dim=feature_dim)
+
+        large_observation = jnp.ones(feature_dim) * 5.0
+        error = jnp.array(1.0)
+
+        result = optimizer.update(state, error, large_observation)
+
+        # After M normalization: sum(alpha_i * x_i^2) + alpha_bias <= 1.0
+        effective = jnp.sum(
+            result.new_state.step_sizes * large_observation**2
+        ) + result.new_state.bias_step_size
+        assert float(effective) <= 1.0 + 1e-6
+
+    def test_normalizer_tracks_meta_gradient_not_primary(self):
+        """v_i should track |δ*x*h| (meta-gradient), not |δ*x| (primary gradient)."""
+        optimizer = Autostep(initial_step_size=0.1, meta_step_size=0.1)
+        feature_dim = 3
+        state = optimizer.init(feature_dim=feature_dim)
+
+        observation = jnp.array([1.0, 2.0, 3.0])
+        error = jnp.array(5.0)
+
+        # Run 3 steps to build up traces
+        for _ in range(3):
+            result = optimizer.update(state, error, observation)
+            state = result.new_state
+
+        # v_i should be proportional to |δ*x_i*h_i|, not |δ*x_i|
+        # With consistent gradients, h_i grows roughly like α_i*δ*x_i
+        # so v_i ~ |δ*x_i * α_i*δ*x_i| = α_i*δ²*x_i²
+        # Features with larger x should have disproportionately larger v
+        # (v ~ x² rather than v ~ x if it were tracking primary gradient)
+        v = state.normalizers
+        # v[2]/v[0] should be closer to (3/1)^2 = 9 than to (3/1) = 3
+        ratio = float(v[2]) / float(jnp.maximum(v[0], 1e-10))
+        assert ratio > 4.0  # Well above linear (3), closer to quadratic (9)
 
 
 class TestObGD:
