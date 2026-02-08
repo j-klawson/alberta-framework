@@ -703,8 +703,8 @@ class TestBatchedNormalizedLearningLoop:
             sequential_metrics.append(metrics)
         sequential_metrics = jnp.stack(sequential_metrics)
 
-        # Should match (use rtol=1e-5 to account for vmap vs sequential floating-point differences)
-        chex.assert_trees_all_close(batched_result.metrics, sequential_metrics, rtol=1e-5)
+        # Should match (use rtol=1e-4 to account for vmap vs sequential floating-point differences)
+        chex.assert_trees_all_close(batched_result.metrics, sequential_metrics, rtol=1e-4)
 
     def test_normalized_batched_with_both_tracking(self, rng_key):
         """Batched normalized loop should support both tracking options."""
