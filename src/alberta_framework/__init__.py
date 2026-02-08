@@ -40,7 +40,7 @@ References
 - Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 # Core types
 # Learners
@@ -76,6 +76,7 @@ from alberta_framework.core.optimizers import (
     IDBD,
     LMS,
     TDIDBD,
+    AGCBounding,
     Autostep,
     AutoTDIDBD,
     Bounder,
@@ -207,6 +208,7 @@ __all__ = [
     "create_tdidbd_state",
     "create_autotdidbd_state",
     # Optimizers - Supervised Learning
+    "AGCBounding",
     "Autostep",
     "Bounder",
     "IDBD",

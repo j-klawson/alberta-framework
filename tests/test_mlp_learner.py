@@ -6,6 +6,7 @@ import jax.random as jr
 import pytest
 
 from alberta_framework import (
+    AGCBounding,
     BatchedMLPResult,
     EMANormalizer,
     MLPLearner,
@@ -560,3 +561,94 @@ class TestBatchedMLPNormalizedLearningLoop:
         chex.assert_shape(result.normalizer_history.means, (num_seeds, 5, 5))
         chex.assert_shape(result.normalizer_history.variances, (num_seeds, 5, 5))
         chex.assert_shape(result.normalizer_history.recording_indices, (num_seeds, 5))
+
+
+class TestAGCBounding:
+    """Tests for the AGCBounding class."""
+
+    def test_no_clipping_small_step(self):
+        """Steps much smaller than weight norms should pass through unchanged."""
+        # Large weights, tiny steps -> no clipping
+        params = (jnp.ones((5, 3)) * 10.0, jnp.ones(3) * 10.0)
+        steps = (jnp.ones((5, 3)) * 1e-6, jnp.ones(3) * 1e-6)
+        error = jnp.array(1.0)
+
+        bounder = AGCBounding(clip_factor=0.01, eps=1e-3)
+        clipped, frac = bounder.bound(steps, error, params)
+
+        # Steps should be unchanged
+        for c, s in zip(clipped, steps):
+            chex.assert_trees_all_close(c, s)
+
+        # No units should be clipped
+        assert float(frac) == 0.0
+
+    def test_clipping_large_step(self):
+        """Large steps relative to weight norms should be clipped down."""
+        # Small weights, huge steps -> clipping
+        params = (jnp.ones((5, 3)) * 0.1, jnp.ones(3) * 0.1)
+        steps = (jnp.ones((5, 3)) * 100.0, jnp.ones(3) * 100.0)
+        error = jnp.array(1.0)
+
+        bounder = AGCBounding(clip_factor=0.01, eps=1e-3)
+        clipped, frac = bounder.bound(steps, error, params)
+
+        # Clipped steps should be smaller than original
+        for c, s in zip(clipped, steps):
+            assert float(jnp.max(jnp.abs(c))) < float(jnp.max(jnp.abs(s)))
+
+        # Some units should be clipped
+        assert float(frac) > 0.0
+
+    def test_metric_fraction_clipped(self):
+        """Metric should report correct fraction of clipped units."""
+        # Create a scenario where exactly the 2D param gets clipped but the 1D doesn't
+        # 2D: weight norm per unit = sqrt(2) * 0.01 ~ 0.014, step norm = sqrt(2) * 100 ~ 141
+        # g_norm = 1.0 * 141 = 141, max_norm = max(0.014, 0.001) * 0.01 ~ 0.00014 -> clips
+        # 1D: |weight| = 10.0, |step| = 1e-8
+        # g_norm = 1.0 * 1e-8 = 1e-8, max_norm = max(10, 0.001) * 0.01 = 0.1 -> no clip
+        params = (jnp.ones((2, 3)) * 0.01, jnp.ones(3) * 10.0)
+        steps = (jnp.ones((2, 3)) * 100.0, jnp.ones(3) * 1e-8)
+        error = jnp.array(1.0)
+
+        bounder = AGCBounding(clip_factor=0.01, eps=1e-3)
+        _, frac = bounder.bound(steps, error, params)
+
+        # 2D has 3 output units (all clipped), 1D has 3 elements (none clipped)
+        # Total units = 6, clipped = 3 -> frac = 0.5
+        assert float(frac) == pytest.approx(0.5, abs=0.01)
+
+    def test_mlp_with_agc_runs(self):
+        """MLPLearner with AGCBounding should run without error in a scan loop."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=AGCBounding(clip_factor=0.01)
+        )
+
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+
+        chex.assert_shape(metrics, (100, 3))
+        chex.assert_tree_all_finite(metrics)
+
+    def test_mlp_agc_reduces_error(self):
+        """Multi-step MLP training with AGC should reduce error."""
+        learner = MLPLearner(
+            hidden_sizes=(16,), step_size=0.1,
+            bounder=AGCBounding(clip_factor=0.01), sparsity=0.0,
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        observation = jnp.array([1.0, 0.5, -0.3, 0.2, 0.8])
+        target = jnp.array([2.0])
+
+        initial_error = abs(float(learner.predict(state, observation)[0]) - 2.0)
+
+        for _ in range(50):
+            result = learner.update(state, observation, target)
+            state = result.state
+
+        final_error = abs(float(learner.predict(state, observation)[0]) - 2.0)
+
+        assert final_error < initial_error

@@ -25,7 +25,7 @@ This framework implements the Alberta Plan for AI Research, progressing through 
 src/alberta_framework/
 ├── core/
 │   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types
-│   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers; Bounder ABC, ObGDBounding
+│   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers; Bounder ABC, ObGDBounding, AGCBounding
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
 │   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
@@ -170,6 +170,32 @@ Dynamic update bounding to prevent overshooting, implemented as a `Bounder` ABC 
 3. **Traces managed by learner**: In the paper, traces are part of the ObGD algorithm. In our implementation, eligibility traces (`gamma`, `lamda`) are managed by the learner, making them available regardless of which optimizer is used.
 4. **Generalizes to per-weight step-sizes**: For Autostep, per-weight step-sizes fold naturally into `total_step = sum(|alpha_i * f(z_i)|)`. No re-tuning of kappa needed.
 
+### AGC Bounding (Adaptive Gradient Clipping)
+Reference: Brock et al. 2021, "High-Performance Large-Scale Image Recognition Without Normalization" (arXiv: 2102.06171)
+
+Per-unit gradient clipping scaled by weight norm, implemented as a `Bounder` ABC (`AGCBounding`):
+1. Compute unit-wise parameter norm: `p_norm = unitwise_norm(param)`
+2. Compute unit-wise step norm: `s_norm = unitwise_norm(step)`
+3. Compute effective gradient norm: `g_norm = |error| * s_norm`
+4. Compute max allowed norm: `max_norm = max(p_norm, eps) * clip_factor`
+5. Clip conditionally: `clipped = where(g_norm > max_norm, step * max_norm / g_norm, step)`
+
+Unit-wise norms by shape:
+- **1D** (biases): absolute value per element
+- **2D** (weight matrices `(fan_in, fan_out)`): L2 norm over axis 0, keepdims=True → shape `(1, fan_out)`
+
+Unlike ObGDBounding which applies a single global scale factor, AGC applies fine-grained, per-unit clipping.
+
+```python
+from alberta_framework import MLPLearner, AGCBounding
+
+learner = MLPLearner(
+    hidden_sizes=(128, 128),
+    step_size=1.0,
+    bounder=AGCBounding(clip_factor=0.01, eps=1e-3),
+)
+```
+
 ### Sparse Initialization
 Reference: Elsayed et al. 2024
 
@@ -190,7 +216,7 @@ Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)`
 
 ```python
 from alberta_framework import (
-    MLPLearner, ObGDBounding, EMANormalizer, Autostep,
+    MLPLearner, ObGDBounding, AGCBounding, EMANormalizer, Autostep,
     RandomWalkStream, run_mlp_learning_loop, NormalizerTrackingConfig
 )
 import jax.random as jr
@@ -569,6 +595,12 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.7.1 (2026-02-07)
+- **FEATURE**: `AGCBounding` — Adaptive Gradient Clipping (Brock et al. 2021) as a `Bounder` ABC, per-unit clipping scaled by weight norm
+- **FEATURE**: `_unitwise_norm()` helper for unit-wise L2 norm computation (1D: abs, 2D+: norm over fan-in axes)
+- **DOCS**: Updated README with AGCBounding docs, example usage, and Brock et al. 2021 citation
+- **DOCS**: Updated CLAUDE.md with AGC algorithm description and changelog
 
 ### v0.7.0 (2026-02-07)
 - **BREAKING**: Removed `NormalizedLinearLearner`, `NormalizedMLPLearner` — use `LinearLearner(normalizer=...)` and `MLPLearner(normalizer=...)` instead

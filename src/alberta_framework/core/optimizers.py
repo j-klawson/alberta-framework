@@ -111,6 +111,88 @@ class ObGDBounding(Bounder):
         return bounded, scale
 
 
+def _unitwise_norm(x: Array) -> Array:
+    """Compute unit-wise L2 norm.
+
+    For 2D+ arrays (e.g. weight matrices ``(fan_in, fan_out)``):
+    L2 norm over all axes except the last, with keepdims for broadcasting.
+    For 1D arrays (biases): absolute value per element.
+    For scalars: absolute value.
+    """
+    if x.ndim >= 2:
+        return jnp.sqrt(jnp.sum(x**2, axis=tuple(range(x.ndim - 1)), keepdims=True))
+    return jnp.abs(x)
+
+
+class AGCBounding(Bounder):
+    """Adaptive Gradient Clipping (Brock et al. 2021).
+
+    Clips per-output-unit based on the ratio of gradient norm to weight norm.
+    Units where ``||grad|| / max(||weight||, eps) > clip_factor`` get scaled
+    down to respect the constraint.
+
+    Unlike ObGDBounding which applies a single global scale factor, AGC
+    applies fine-grained, per-unit clipping that adapts to each layer's
+    weight magnitude.
+
+    The metric returned is the fraction of units that were clipped (0.0 = no
+    clipping, 1.0 = all units clipped).
+
+    Reference: Brock, A., De, S., Smith, S.L., & Simonyan, K. (2021).
+    "High-Performance Large-Scale Image Recognition Without Normalization"
+    (arXiv: 2102.06171)
+
+    Attributes:
+        clip_factor: Maximum allowed gradient-to-weight ratio (lambda). Default 0.01.
+        eps: Floor for weight norm to avoid division by zero. Default 1e-3.
+    """
+
+    def __init__(self, clip_factor: float = 0.01, eps: float = 1e-3):
+        self._clip_factor = clip_factor
+        self._eps = eps
+
+    def bound(
+        self,
+        steps: tuple[Array, ...],
+        error: Array,
+        params: tuple[Array, ...],
+    ) -> tuple[tuple[Array, ...], Array]:
+        """Bound proposed steps using per-unit adaptive gradient clipping.
+
+        For each parameter/step pair, computes unit-wise norms and clips
+        units where ``|error| * ||step|| > clip_factor * max(||param||, eps)``.
+
+        Args:
+            steps: Per-parameter step arrays from the optimizer
+            error: Prediction error scalar
+            params: Current parameter values (used for weight norms)
+
+        Returns:
+            ``(clipped_steps, frac_clipped)`` where frac_clipped is the
+            fraction of units that were clipped
+        """
+        error_abs = jnp.abs(jnp.squeeze(error))
+        clipped = []
+        total_units = 0
+        clipped_units = jnp.array(0.0)
+
+        for step, param in zip(steps, params):
+            p_norm = _unitwise_norm(param)
+            s_norm = _unitwise_norm(step)
+            g_norm = error_abs * s_norm
+            max_norm = jnp.maximum(p_norm, self._eps) * self._clip_factor
+            scale = max_norm / jnp.maximum(g_norm, 1e-6)
+            needs_clip = g_norm > max_norm
+            clipped_step = jnp.where(needs_clip, step * scale, step)
+            clipped.append(clipped_step)
+
+            total_units += needs_clip.size
+            clipped_units = clipped_units + jnp.sum(needs_clip.astype(jnp.float32))
+
+        frac_clipped = clipped_units / jnp.maximum(total_units, 1)
+        return tuple(clipped), frac_clipped
+
+
 # =============================================================================
 # Supervised Learning Optimizers
 # =============================================================================

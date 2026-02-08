@@ -75,7 +75,7 @@ Learners accept three independent, composable concerns:
 
 ```python
 from alberta_framework import (
-    LinearLearner, MLPLearner, Autostep, ObGDBounding, EMANormalizer
+    LinearLearner, MLPLearner, Autostep, ObGDBounding, AGCBounding, EMANormalizer
 )
 
 # Linear learner with Autostep + normalization
@@ -89,6 +89,14 @@ mlp = MLPLearner(
     hidden_sizes=(128, 128),
     optimizer=Autostep(),
     bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+
+# MLP with AGC bounding (per-unit clipping scaled by weight norm)
+mlp_agc = MLPLearner(
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=AGCBounding(clip_factor=0.01),
     normalizer=EMANormalizer(decay=0.99),
 )
 ```
@@ -107,6 +115,7 @@ mlp = MLPLearner(
 ### Bounders
 
 - **ObGDBounding**: Dynamic update bounding to prevent overshooting (Elsayed et al., 2024). Decoupled from the optimizer so it can be composed with any optimizer.
+- **AGCBounding**: Adaptive Gradient Clipping — per-unit clipping scaled by weight norm (Brock et al., 2021). Finer-grained than ObGD's global scaling.
 
 ### Normalizers
 
@@ -235,6 +244,13 @@ If you use this framework in your research, please cite:
   author = {Kearney, Alex and Veeriah, Vivek and Travnik, Jaden and Sutton, Richard S. and Pilarski, Patrick M.},
   booktitle = {International Conference on Machine Learning},
   year = {2019}
+}
+
+@article{brock2021high,
+  title = {High-Performance Large-Scale Image Recognition Without Normalization},
+  author = {Brock, Andrew and De, Soham and Smith, Samuel L. and Simonyan, Karen},
+  journal = {arXiv preprint arXiv:2102.06171},
+  year = {2021}
 }
 
 @article{elsayed2024streaming,
