@@ -10,9 +10,8 @@ from alberta_framework import (
     LMS,
     Autostep,
     BatchedLearningResult,
-    BatchedNormalizedResult,
+    EMANormalizer,
     LinearLearner,
-    NormalizedLinearLearner,
     NormalizerHistory,
     NormalizerTrackingConfig,
     RandomWalkStream,
@@ -21,8 +20,6 @@ from alberta_framework import (
     metrics_to_dicts,
     run_learning_loop,
     run_learning_loop_batched,
-    run_normalized_learning_loop,
-    run_normalized_learning_loop_batched,
 )
 
 
@@ -393,14 +390,14 @@ class TestStepSizeTracking:
 
 
 class TestNormalizedLearningLoopTracking:
-    """Tests for tracking in run_normalized_learning_loop."""
+    """Tests for tracking in run_learning_loop with a normalized learner."""
 
     def test_no_tracking_returns_2_tuple(self, rng_key):
         """Without tracking, should return (state, metrics)."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
 
-        result = run_normalized_learning_loop(learner, stream, num_steps=100, key=rng_key)
+        result = run_learning_loop(learner, stream, num_steps=100, key=rng_key)
 
         assert len(result) == 2
         state, metrics = result
@@ -410,10 +407,10 @@ class TestNormalizedLearningLoopTracking:
     def test_step_size_tracking_returns_3_tuple(self, rng_key):
         """With step_size_tracking, should return (state, metrics, ss_history)."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         ss_config = StepSizeTrackingConfig(interval=10)
 
-        result = run_normalized_learning_loop(
+        result = run_learning_loop(
             learner, stream, num_steps=100, key=rng_key, step_size_tracking=ss_config
         )
 
@@ -427,10 +424,10 @@ class TestNormalizedLearningLoopTracking:
     def test_normalizer_tracking_returns_3_tuple(self, rng_key):
         """With normalizer_tracking, should return (state, metrics, norm_history)."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         norm_config = NormalizerTrackingConfig(interval=10)
 
-        result = run_normalized_learning_loop(
+        result = run_learning_loop(
             learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
         )
 
@@ -445,11 +442,11 @@ class TestNormalizedLearningLoopTracking:
     def test_both_tracking_returns_4_tuple(self, rng_key):
         """With both tracking options, should return 4-tuple."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         ss_config = StepSizeTrackingConfig(interval=10)
         norm_config = NormalizerTrackingConfig(interval=20)
 
-        result = run_normalized_learning_loop(
+        result = run_learning_loop(
             learner,
             stream,
             num_steps=100,
@@ -472,10 +469,10 @@ class TestNormalizedLearningLoopTracking:
         """Autostep's v_i should be tracked in normalized learning loop."""
         feature_dim = 5
         stream = RandomWalkStream(feature_dim=feature_dim)
-        learner = NormalizedLinearLearner(optimizer=Autostep())
+        learner = LinearLearner(optimizer=Autostep(), normalizer=EMANormalizer())
         ss_config = StepSizeTrackingConfig(interval=10)
 
-        _, _, ss_history = run_normalized_learning_loop(
+        _, _, ss_history = run_learning_loop(
             learner, stream, num_steps=100, key=rng_key, step_size_tracking=ss_config
         )
 
@@ -486,10 +483,10 @@ class TestNormalizedLearningLoopTracking:
     def test_normalizer_history_tracks_adaptation(self, rng_key):
         """Normalizer history should capture mean/var adaptation over time."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.01)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         norm_config = NormalizerTrackingConfig(interval=100)
 
-        _, _, norm_history = run_normalized_learning_loop(
+        _, _, norm_history = run_learning_loop(
             learner, stream, num_steps=10000, key=rng_key, normalizer_tracking=norm_config
         )
 
@@ -503,22 +500,22 @@ class TestNormalizedLearningLoopTracking:
     def test_normalizer_tracking_invalid_interval_raises(self, rng_key):
         """Invalid normalizer tracking interval should raise ValueError."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         norm_config = NormalizerTrackingConfig(interval=0)
 
         with pytest.raises(ValueError, match="normalizer_tracking.interval must be >= 1"):
-            run_normalized_learning_loop(
+            run_learning_loop(
                 learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
             )
 
     def test_normalizer_tracking_interval_too_large_raises(self, rng_key):
         """Normalizer tracking interval > num_steps should raise ValueError."""
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         norm_config = NormalizerTrackingConfig(interval=200)
 
         with pytest.raises(ValueError, match="must be <= num_steps"):
-            run_normalized_learning_loop(
+            run_learning_loop(
                 learner, stream, num_steps=100, key=rng_key, normalizer_tracking=norm_config
             )
 
@@ -527,10 +524,10 @@ class TestNormalizedLearningLoopTracking:
         num_steps = 100
         interval = 25
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         norm_config = NormalizerTrackingConfig(interval=interval)
 
-        _, _, norm_history = run_normalized_learning_loop(
+        _, _, norm_history = run_learning_loop(
             learner, stream, num_steps=num_steps, key=rng_key, normalizer_tracking=norm_config
         )
 
@@ -665,7 +662,7 @@ class TestBatchedLearningLoop:
 
 
 class TestBatchedNormalizedLearningLoop:
-    """Tests for run_normalized_learning_loop_batched."""
+    """Tests for run_learning_loop_batched with a normalized learner."""
 
     def test_normalized_batched_returns_correct_shapes(self, rng_key):
         """Batched normalized loop should return metrics with shape (num_seeds, num_steps, 4)."""
@@ -674,14 +671,14 @@ class TestBatchedNormalizedLearningLoop:
         feature_dim = 10
 
         stream = RandomWalkStream(feature_dim=feature_dim)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         keys = jr.split(rng_key, num_seeds)
 
-        result = run_normalized_learning_loop_batched(learner, stream, num_steps, keys)
+        result = run_learning_loop_batched(learner, stream, num_steps, keys)
 
-        assert isinstance(result, BatchedNormalizedResult)
+        assert isinstance(result, BatchedLearningResult)
         assert result.metrics.shape == (num_seeds, num_steps, 4)
-        assert result.states.learner_state.weights.shape == (num_seeds, feature_dim)
+        assert result.states.weights.shape == (num_seeds, feature_dim)
         assert result.states.normalizer_state.mean.shape == (num_seeds, feature_dim)
         assert result.step_size_history is None
         assert result.normalizer_history is None
@@ -693,16 +690,16 @@ class TestBatchedNormalizedLearningLoop:
         feature_dim = 5
 
         stream = RandomWalkStream(feature_dim=feature_dim)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         keys = jr.split(rng_key, num_seeds)
 
         # Run batched
-        batched_result = run_normalized_learning_loop_batched(learner, stream, num_steps, keys)
+        batched_result = run_learning_loop_batched(learner, stream, num_steps, keys)
 
         # Run sequential
         sequential_metrics = []
         for i in range(num_seeds):
-            _, metrics = run_normalized_learning_loop(learner, stream, num_steps, keys[i])
+            _, metrics = run_learning_loop(learner, stream, num_steps, keys[i])
             sequential_metrics.append(metrics)
         sequential_metrics = jnp.stack(sequential_metrics)
 
@@ -720,12 +717,12 @@ class TestBatchedNormalizedLearningLoop:
         norm_recordings = num_steps // norm_interval
 
         stream = RandomWalkStream(feature_dim=feature_dim)
-        learner = NormalizedLinearLearner(optimizer=Autostep())
+        learner = LinearLearner(optimizer=Autostep(), normalizer=EMANormalizer())
         keys = jr.split(rng_key, num_seeds)
         ss_config = StepSizeTrackingConfig(interval=ss_interval)
         norm_config = NormalizerTrackingConfig(interval=norm_interval)
 
-        result = run_normalized_learning_loop_batched(
+        result = run_learning_loop_batched(
             learner,
             stream,
             num_steps,
@@ -760,11 +757,11 @@ class TestBatchedNormalizedLearningLoop:
         num_steps = 50
 
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         keys = jr.split(rng_key, num_seeds)
         ss_config = StepSizeTrackingConfig(interval=10)
 
-        result = run_normalized_learning_loop_batched(
+        result = run_learning_loop_batched(
             learner, stream, num_steps, keys, step_size_tracking=ss_config
         )
 
@@ -777,11 +774,11 @@ class TestBatchedNormalizedLearningLoop:
         num_steps = 50
 
         stream = RandomWalkStream(feature_dim=5)
-        learner = NormalizedLinearLearner(optimizer=IDBD())
+        learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
         keys = jr.split(rng_key, num_seeds)
         norm_config = NormalizerTrackingConfig(interval=10)
 
-        result = run_normalized_learning_loop_batched(
+        result = run_learning_loop_batched(
             learner, stream, num_steps, keys, normalizer_tracking=norm_config
         )
 

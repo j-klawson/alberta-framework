@@ -7,6 +7,8 @@
 
 A JAX-based research framework implementing components of [The Alberta Plan for AI Research](https://arxiv.org/abs/2208.11173) in the pursuit of building the foundations of Continual AI.
 
+> **Warning:** This framework is under active research development. The API is unstable and subject to breaking changes between releases. It is not intended for production use.
+
 > "The agents are complex only because they interact with a complex world... their initial design is as simple, general, and scalable as possible." — *Sutton et al., 2022*
 
 ## Overview
@@ -28,7 +30,7 @@ Depending on my research trajectory I may or may not implement components requir
 | Step | Focus | Status |
 |------|-------|--------|
 | 1 | Meta-learned step-sizes (IDBD, Autostep) | **Complete** |
-| 2 | Feature generation and testing | Planned |
+| 2 | Nonlinear function approximation (MLP, ObGD) | **In Progress** |
 | 3 | GVF predictions, Horde architecture | Planned |
 | 4 | Actor-critic with eligibility traces | Planned |
 | 5-6 | Off-policy learning, average reward | Planned |
@@ -64,6 +66,33 @@ state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=jr.key(
 
 ## Core Components
 
+### Composable Architecture
+
+Learners accept three independent, composable concerns:
+- **Optimizer** — per-weight step-size adaptation (LMS, IDBD, Autostep)
+- **Bounder** — optional global update bounding (ObGDBounding)
+- **Normalizer** — optional online feature normalization (EMANormalizer, WelfordNormalizer)
+
+```python
+from alberta_framework import (
+    LinearLearner, MLPLearner, Autostep, ObGDBounding, EMANormalizer
+)
+
+# Linear learner with Autostep + normalization
+learner = LinearLearner(
+    optimizer=Autostep(),
+    normalizer=EMANormalizer(decay=0.99),
+)
+
+# MLP with Autostep + ObGD bounding + normalization
+mlp = MLPLearner(
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+```
+
 ### Optimizers
 
 **Supervised Learning:**
@@ -75,6 +104,34 @@ state, metrics = run_learning_loop(learner, stream, num_steps=10000, key=jr.key(
 - **TDIDBD**: TD learning with per-weight adaptive step-sizes and eligibility traces (Kearney et al., 2019)
 - **AutoTDIDBD**: TD learning with AutoStep-style normalization for improved stability
 
+### Bounders
+
+- **ObGDBounding**: Dynamic update bounding to prevent overshooting (Elsayed et al., 2024). Decoupled from the optimizer so it can be composed with any optimizer.
+
+### Normalizers
+
+Online feature normalization for handling varying feature scales:
+- **EMANormalizer**: Exponential moving average — suitable for non-stationary distributions
+- **WelfordNormalizer**: Welford's algorithm with Bessel's correction — suitable for stationary distributions
+
+### MLP Learner
+
+Multi-layer perceptron for nonlinear function approximation (Elsayed et al., 2024):
+
+```python
+from alberta_framework import MLPLearner, ObGDBounding, RandomWalkStream, run_mlp_learning_loop
+import jax.random as jr
+
+stream = RandomWalkStream(feature_dim=10)
+learner = MLPLearner(
+    hidden_sizes=(128, 128),
+    step_size=1.0,
+    bounder=ObGDBounding(kappa=2.0),
+    sparsity=0.9,
+)
+state, metrics = run_mlp_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
+```
+
 ### Streams
 
 Non-stationary experience generators implementing the `ScanStream` protocol:
@@ -83,6 +140,7 @@ Non-stationary experience generators implementing the `ScanStream` protocol:
 - `AbruptChangeStream`: Sudden target switches
 - `PeriodicChangeStream`: Sinusoidal oscillation
 - `DynamicScaleShiftStream`: Time-varying feature scales
+- `ScaleDriftStream`: Continuous feature scale drift
 
 ### TD Learning
 
@@ -177,6 +235,13 @@ If you use this framework in your research, please cite:
   author = {Kearney, Alex and Veeriah, Vivek and Travnik, Jaden and Sutton, Richard S. and Pilarski, Patrick M.},
   booktitle = {International Conference on Machine Learning},
   year = {2019}
+}
+
+@article{elsayed2024streaming,
+  title = {Streaming Deep Reinforcement Learning Finally Works},
+  author = {Elsayed, Mohamed and Lan, Gautham and Lim, Shuze and Mahmood, A. Rupam},
+  journal = {arXiv preprint arXiv:2410.14606},
+  year = {2024}
 }
 ```
 

@@ -35,7 +35,6 @@ from alberta_framework import (
     Autostep,
     EMANormalizer,
     LinearLearner,
-    NormalizedLinearLearner,
     RandomWalkStream,
     ScaledStreamWrapper,
     Timer,
@@ -115,7 +114,7 @@ def make_idbd_learner():
 
 def make_idbd_normalized_learner():
     """Create IDBD learner with external normalization."""
-    return NormalizedLinearLearner(
+    return LinearLearner(
         optimizer=IDBD(**IDBD_PARAMS),
         normalizer=EMANormalizer(**NORMALIZER_PARAMS),
     )
@@ -128,7 +127,7 @@ def make_autostep_learner():
 
 def make_autostep_normalized_learner():
     """Create Autostep learner with external normalization."""
-    return NormalizedLinearLearner(
+    return LinearLearner(
         optimizer=Autostep(**AUTOSTEP_PARAMS),
         normalizer=EMANormalizer(**NORMALIZER_PARAMS),
     )
@@ -148,13 +147,7 @@ def run_single_experiment(
     learner = learner_factory()
     stream = stream_factory()
 
-    if hasattr(learner, "normalizer"):
-        # NormalizedLinearLearner - need to run differently
-        from alberta_framework.core.learners import run_normalized_learning_loop
-
-        _, metrics = run_normalized_learning_loop(learner, stream, num_steps, key)
-    else:
-        _, metrics = run_learning_loop(learner, stream, num_steps, key)
+    _, metrics = run_learning_loop(learner, stream, num_steps, key)
 
     metrics_list = metrics_to_dicts(metrics)
     squared_errors = np.array([m["squared_error"] for m in metrics_list])

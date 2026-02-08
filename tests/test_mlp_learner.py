@@ -6,18 +6,15 @@ import jax.random as jr
 import pytest
 
 from alberta_framework import (
-    BatchedMLPNormalizedResult,
     BatchedMLPResult,
     EMANormalizer,
     MLPLearner,
-    NormalizedMLPLearner,
     NormalizerTrackingConfig,
+    ObGDBounding,
     RandomWalkStream,
     WelfordNormalizer,
     run_mlp_learning_loop,
     run_mlp_learning_loop_batched,
-    run_mlp_normalized_learning_loop,
-    run_mlp_normalized_learning_loop_batched,
 )
 
 
@@ -87,7 +84,9 @@ class TestMLPLearner:
 
     def test_update_reduces_error(self):
         """Multiple updates on a fixed target should reduce error."""
-        learner = MLPLearner(hidden_sizes=(16,), step_size=0.1, kappa=2.0, sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), step_size=0.1, bounder=ObGDBounding(kappa=2.0), sparsity=0.0
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.array([1.0, 0.5, -0.3, 0.2, 0.8])
@@ -136,14 +135,12 @@ class TestMLPLearner:
             chex.assert_trees_all_close(bias, jnp.zeros_like(bias))
 
     def test_traces_initialized_to_zero(self):
-        """All optimizer traces should be initialized to zero."""
+        """All eligibility traces should be initialized to zero."""
         learner = MLPLearner(hidden_sizes=(32,))
         state = learner.init(feature_dim=5, key=jr.key(42))
 
-        for wt in state.optimizer_state.weight_traces:
-            chex.assert_trees_all_close(wt, jnp.zeros_like(wt))
-        for bt in state.optimizer_state.bias_traces:
-            chex.assert_trees_all_close(bt, jnp.zeros_like(bt))
+        for trace in state.traces:
+            chex.assert_trees_all_close(trace, jnp.zeros_like(trace))
 
 
 class TestRunMLPLearningLoop:
@@ -152,7 +149,9 @@ class TestRunMLPLearningLoop:
     def test_scan_loop_produces_correct_shapes(self):
         """Scan loop should return metrics with shape (num_steps, 3)."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
 
         state, metrics = run_mlp_learning_loop(
             learner, stream, num_steps=100, key=jr.key(42)
@@ -168,7 +167,9 @@ class TestRunMLPLearningLoop:
     def test_scan_loop_deterministic(self):
         """Same key should produce identical results."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
 
         _, metrics1 = run_mlp_learning_loop(
             learner, stream, num_steps=50, key=jr.key(42)
@@ -182,7 +183,9 @@ class TestRunMLPLearningLoop:
     def test_scan_loop_with_provided_state(self):
         """Should accept a pre-initialized state."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
         initial_state = learner.init(feature_dim=5, key=jr.key(0))
 
         state, metrics = run_mlp_learning_loop(
@@ -200,7 +203,9 @@ class TestBatchedMLPLearningLoop:
     def test_batched_returns_correct_shapes(self):
         """Batched loop should return metrics with shape (num_seeds, num_steps, 3)."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
         num_seeds = 4
         num_steps = 50
 
@@ -222,7 +227,9 @@ class TestBatchedMLPLearningLoop:
     def test_batched_matches_sequential(self):
         """Batched results should match sequential results for each seed."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
         num_seeds = 3
         num_steps = 50
 
@@ -245,7 +252,9 @@ class TestBatchedMLPLearningLoop:
     def test_batched_deterministic(self):
         """Same keys should produce identical batched results."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
 
         keys = jr.split(jr.key(42), 3)
 
@@ -261,7 +270,9 @@ class TestBatchedMLPLearningLoop:
     def test_batched_different_keys_different_results(self):
         """Different seeds should produce different metrics."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, bounder=ObGDBounding(kappa=2.0)
+        )
 
         keys = jr.split(jr.key(42), 3)
         result = run_mlp_learning_loop_batched(
@@ -274,19 +285,18 @@ class TestBatchedMLPLearningLoop:
 
 
 class TestNormalizedMLPLearner:
-    """Tests for the NormalizedMLPLearner class."""
+    """Tests for MLPLearner with normalizer parameter."""
 
     def test_correct_param_shapes(self):
-        """NormalizedMLPLearner should have correct param shapes."""
-        mlp = MLPLearner(hidden_sizes=(32,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        """MLPLearner with normalizer should have correct param shapes."""
+        learner = MLPLearner(hidden_sizes=(32,), sparsity=0.0, normalizer=EMANormalizer())
         state = learner.init(feature_dim=10, key=jr.key(42))
 
         # MLP layer shapes
-        chex.assert_shape(state.learner_state.params.weights[0], (32, 10))
-        chex.assert_shape(state.learner_state.params.biases[0], (32,))
-        chex.assert_shape(state.learner_state.params.weights[1], (1, 32))
-        chex.assert_shape(state.learner_state.params.biases[1], (1,))
+        chex.assert_shape(state.params.weights[0], (32, 10))
+        chex.assert_shape(state.params.biases[0], (32,))
+        chex.assert_shape(state.params.weights[1], (1, 32))
+        chex.assert_shape(state.params.biases[1], (1,))
 
         # Normalizer state
         chex.assert_shape(state.normalizer_state.mean, (10,))
@@ -294,8 +304,10 @@ class TestNormalizedMLPLearner:
 
     def test_predict_returns_scalar(self):
         """Predict should return a 1-d array."""
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.ones(5)
@@ -305,9 +317,11 @@ class TestNormalizedMLPLearner:
         chex.assert_tree_all_finite(prediction)
 
     def test_update_returns_correct_shapes(self):
-        """Update should return NormalizedMLPUpdateResult with 4-column metrics."""
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        """Update should return MLPUpdateResult with 4-column metrics."""
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.ones(5)
@@ -322,8 +336,10 @@ class TestNormalizedMLPLearner:
 
     def test_normalizer_state_updates(self):
         """Normalizer state should change after an update."""
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -338,8 +354,9 @@ class TestNormalizedMLPLearner:
 
     def test_works_with_ema_normalizer(self):
         """Should work with EMANormalizer."""
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp, normalizer=EMANormalizer(decay=0.95))
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, normalizer=EMANormalizer(decay=0.95)
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.ones(5)
@@ -351,8 +368,9 @@ class TestNormalizedMLPLearner:
 
     def test_works_with_welford_normalizer(self):
         """Should work with WelfordNormalizer."""
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp, normalizer=WelfordNormalizer())
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, normalizer=WelfordNormalizer()
+        )
         state = learner.init(feature_dim=5, key=jr.key(42))
 
         observation = jnp.ones(5)
@@ -364,15 +382,17 @@ class TestNormalizedMLPLearner:
 
 
 class TestRunMLPNormalizedLearningLoop:
-    """Tests for the run_mlp_normalized_learning_loop function."""
+    """Tests for run_mlp_learning_loop with a normalized MLPLearner."""
 
     def test_scan_loop_produces_correct_shapes(self):
         """Scan loop should return metrics with shape (num_steps, 4)."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
 
-        state, metrics = run_mlp_normalized_learning_loop(
+        state, metrics = run_mlp_learning_loop(
             learner, stream, num_steps=100, key=jr.key(42)
         )
 
@@ -380,19 +400,21 @@ class TestRunMLPNormalizedLearningLoop:
         chex.assert_tree_all_finite(metrics)
 
         # State should have correct param shapes
-        chex.assert_shape(state.learner_state.params.weights[0], (16, 5))
-        chex.assert_shape(state.learner_state.params.weights[1], (1, 16))
+        chex.assert_shape(state.params.weights[0], (16, 5))
+        chex.assert_shape(state.params.weights[1], (1, 16))
 
     def test_scan_loop_deterministic(self):
         """Same key should produce identical results."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
 
-        _, metrics1 = run_mlp_normalized_learning_loop(
+        _, metrics1 = run_mlp_learning_loop(
             learner, stream, num_steps=50, key=jr.key(42)
         )
-        _, metrics2 = run_mlp_normalized_learning_loop(
+        _, metrics2 = run_mlp_learning_loop(
             learner, stream, num_steps=50, key=jr.key(42)
         )
 
@@ -401,11 +423,13 @@ class TestRunMLPNormalizedLearningLoop:
     def test_tracking_returns_3_tuple(self):
         """With normalizer tracking, should return 3-tuple."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         config = NormalizerTrackingConfig(interval=10)
 
-        result = run_mlp_normalized_learning_loop(
+        result = run_mlp_learning_loop(
             learner, stream, num_steps=100, key=jr.key(42),
             normalizer_tracking=config,
         )
@@ -421,17 +445,19 @@ class TestRunMLPNormalizedLearningLoop:
     def test_invalid_interval_raises(self):
         """Invalid tracking interval should raise ValueError."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
 
         with pytest.raises(ValueError, match="must be >= 1"):
-            run_mlp_normalized_learning_loop(
+            run_mlp_learning_loop(
                 learner, stream, num_steps=100, key=jr.key(42),
                 normalizer_tracking=NormalizerTrackingConfig(interval=0),
             )
 
         with pytest.raises(ValueError, match="must be <= num_steps"):
-            run_mlp_normalized_learning_loop(
+            run_mlp_learning_loop(
                 learner, stream, num_steps=100, key=jr.key(42),
                 normalizer_tracking=NormalizerTrackingConfig(interval=200),
             )
@@ -439,11 +465,13 @@ class TestRunMLPNormalizedLearningLoop:
     def test_with_provided_state(self):
         """Should accept a pre-initialized state."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         initial_state = learner.init(feature_dim=5, key=jr.key(0))
 
-        state, metrics = run_mlp_normalized_learning_loop(
+        state, metrics = run_mlp_learning_loop(
             learner, stream, num_steps=50, key=jr.key(42),
             learner_state=initial_state,
         )
@@ -453,52 +481,56 @@ class TestRunMLPNormalizedLearningLoop:
 
 
 class TestBatchedMLPNormalizedLearningLoop:
-    """Tests for the run_mlp_normalized_learning_loop_batched function."""
+    """Tests for run_mlp_learning_loop_batched with a normalized MLPLearner."""
 
     def test_batched_returns_correct_shapes(self):
         """Batched loop should return metrics with shape (num_seeds, num_steps, 4)."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         num_seeds = 4
         num_steps = 50
 
         keys = jr.split(jr.key(42), num_seeds)
-        result = run_mlp_normalized_learning_loop_batched(
+        result = run_mlp_learning_loop_batched(
             learner, stream, num_steps=num_steps, keys=keys
         )
 
-        assert isinstance(result, BatchedMLPNormalizedResult)
+        assert isinstance(result, BatchedMLPResult)
         chex.assert_shape(result.metrics, (num_seeds, num_steps, 4))
         chex.assert_tree_all_finite(result.metrics)
         assert result.normalizer_history is None
 
         # Check batched param shapes
         chex.assert_shape(
-            result.states.learner_state.params.weights[0], (num_seeds, 16, 5)
+            result.states.params.weights[0], (num_seeds, 16, 5)
         )
         chex.assert_shape(
-            result.states.learner_state.params.weights[1], (num_seeds, 1, 16)
+            result.states.params.weights[1], (num_seeds, 1, 16)
         )
 
     def test_batched_matches_sequential(self):
         """Batched results should match sequential results for each seed."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         num_seeds = 3
         num_steps = 50
 
         keys = jr.split(jr.key(42), num_seeds)
 
         # Run batched
-        batched_result = run_mlp_normalized_learning_loop_batched(
+        batched_result = run_mlp_learning_loop_batched(
             learner, stream, num_steps=num_steps, keys=keys
         )
 
         # Run sequential
         for i in range(num_seeds):
-            state_i, metrics_i = run_mlp_normalized_learning_loop(
+            state_i, metrics_i = run_mlp_learning_loop(
                 learner, stream, num_steps=num_steps, key=keys[i]
             )
             chex.assert_trees_all_close(
@@ -508,19 +540,21 @@ class TestBatchedMLPNormalizedLearningLoop:
     def test_batched_with_tracking(self):
         """Batched with tracking should return correct shapes."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
-        mlp = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
-        learner = NormalizedMLPLearner(mlp)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0), normalizer=EMANormalizer(),
+        )
         num_seeds = 3
         num_steps = 50
         config = NormalizerTrackingConfig(interval=10)
 
         keys = jr.split(jr.key(42), num_seeds)
-        result = run_mlp_normalized_learning_loop_batched(
+        result = run_mlp_learning_loop_batched(
             learner, stream, num_steps=num_steps, keys=keys,
             normalizer_tracking=config,
         )
 
-        assert isinstance(result, BatchedMLPNormalizedResult)
+        assert isinstance(result, BatchedMLPResult)
         chex.assert_shape(result.metrics, (num_seeds, num_steps, 4))
         assert result.normalizer_history is not None
         chex.assert_shape(result.normalizer_history.means, (num_seeds, 5, 5))

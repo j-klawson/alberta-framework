@@ -31,6 +31,7 @@ from alberta_framework import (
     LinearLearner,
     MLPLearner,
     ObGD,
+    ObGDBounding,
     RandomWalkStream,
     Timer,
     metrics_to_dicts,
@@ -64,10 +65,10 @@ def run_comparison(
             optimizer=ObGD(step_size=1.0, kappa=2.0)
         ),
         "MLP(128)+ObGD": lambda: MLPLearner(
-            hidden_sizes=(128,), step_size=1.0, kappa=2.0, sparsity=0.9
+            hidden_sizes=(128,), step_size=1.0, bounder=ObGDBounding(kappa=2.0), sparsity=0.9
         ),
         "MLP(128,128)+ObGD": lambda: MLPLearner(
-            hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9
+            hidden_sizes=(128, 128), step_size=1.0, bounder=ObGDBounding(kappa=2.0), sparsity=0.9
         ),
     }
 

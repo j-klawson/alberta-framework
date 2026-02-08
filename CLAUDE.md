@@ -25,10 +25,10 @@ This framework implements the Alberta Plan for AI Research, progressing through 
 src/alberta_framework/
 ├── core/
 │   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types
-│   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers
+│   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers; Bounder ABC, ObGDBounding
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
-│   └── learners.py     # LinearLearner, MLPLearner, NormalizedMLPLearner, TDLinearLearner, learning loops
+│   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -89,7 +89,7 @@ mkdocs build          # Build static site to site/
 - **Type Safety**: jaxtyping annotations for shape checking (`Float[Array, " feature_dim"]`)
 - **Functional Style**: Pure functions enable `jit`, `vmap`, `jax.lax.scan`
 - **Scan-Based Learning**: Learning loops use `jax.lax.scan` for JIT-compiled training
-- **Composition**: Learners accept optimizers as parameters
+- **Composition**: Learners accept independent optimizer, bounder, and normalizer ABCs
 - **Temporal Uniformity**: Every component updates at every time step
 
 ### JAX Conventions
@@ -153,18 +153,22 @@ Streaming feature normalization following the Alberta Plan:
   - `EMANormalizer`: Exponential moving average of mean/variance — suitable for non-stationary distributions
   - `WelfordNormalizer`: Welford's algorithm with Bessel's correction — suitable for stationary distributions
 - State types: `EMANormalizerState` (mean, var, sample_count, decay), `WelfordNormalizerState` (mean, var, sample_count, p)
-- `NormalizedLinearLearner` accepts any `Normalizer` subclass, defaults to `EMANormalizer()`
+- Both `LinearLearner` and `MLPLearner` accept an optional `normalizer` parameter
 
-### ObGD (Observation-bounded Gradient Descent)
+### ObGD Bounding (Observation-bounded Gradient Descent)
 Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally Works"
 
-Dynamic step-size bounding to prevent overshooting:
-1. `z = gamma * lamda * z + observation` — update eligibility traces
-2. `M = alpha * kappa * max(|error|, 1) * (||z_w||_1 + |z_b|)` — compute bound
-3. `alpha_eff = alpha / max(M, 1)` — effective step-size
-4. `w += alpha_eff * error * z` — bounded weight update
+Dynamic update bounding to prevent overshooting, implemented as a `Bounder` ABC (`ObGDBounding`):
+1. Optimizer produces per-parameter steps from traces: `step = optimizer.update_from_gradient(state, z)`
+2. `M = kappa * max(|error|, 1) * sum(|step_i|)` — compute bound
+3. `scale = 1 / max(M, 1)` — bounding scale factor
+4. `w += scale * error * step` — bounded weight update
 
-For supervised learning (gamma=0, lamda=0), traces = observation, making ObGD equivalent to LMS with dynamic bounding. For RL, nonzero gamma/lamda enable eligibility traces.
+**Implementation differences from Elsayed et al. 2024:**
+1. **Decoupled from optimizer**: In the paper, ObGD is a complete optimizer with a fixed scalar step-size `alpha`. In our implementation, ObGD bounding is a separate `Bounder` ABC (`ObGDBounding`) applied on top of any optimizer's output. For LMS with `ObGDBounding(kappa=2.0)`: `step = alpha * z`, so `total_step = alpha * z_sum`, giving `M = kappa * max(|error|, 1) * alpha * z_sum` — identical to original.
+2. **Optimizer processes trace, not error*trace**: The optimizer receives the eligibility trace `z` (or prediction gradient for supervised), and the error is multiplied after bounding.
+3. **Traces managed by learner**: In the paper, traces are part of the ObGD algorithm. In our implementation, eligibility traces (`gamma`, `lamda`) are managed by the learner, making them available regardless of which optimizer is used.
+4. **Generalizes to per-weight step-sizes**: For Autostep, per-weight step-sizes fold naturally into `total_step = sum(|alpha_i * f(z_i)|)`. No re-tuning of kappa needed.
 
 ### Sparse Initialization
 Reference: Elsayed et al. 2024
@@ -180,58 +184,37 @@ Reference: Elsayed et al. 2024
 Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)`
 - Parameterless layer normalization (no learned scale/shift)
 - Sparse initialization (90% default)
-- ObGD bounding applied globally across all parameter traces
+- Composable: accepts any `Optimizer`, optional `Bounder`, optional `Normalizer`
 - Gradient computation via `jax.grad` on pure forward function
-
-```python
-from alberta_framework import MLPLearner, RandomWalkStream, run_mlp_learning_loop
-import jax.random as jr
-
-stream = RandomWalkStream(feature_dim=10)
-learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9)
-state, metrics = run_mlp_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
-```
-
-### Normalized MLP Learner
-Wraps `MLPLearner` with online feature normalization (EMA or Welford), following the
-same pattern as `NormalizedLinearLearner`. Accepts a pre-constructed `MLPLearner` to
-avoid duplicating its constructor parameters.
+- Eligibility traces managed by learner (`gamma`, `lamda` parameters)
 
 ```python
 from alberta_framework import (
-    MLPLearner, NormalizedMLPLearner, EMANormalizer,
-    RandomWalkStream, run_mlp_normalized_learning_loop,
-    NormalizerTrackingConfig
+    MLPLearner, ObGDBounding, EMANormalizer, Autostep,
+    RandomWalkStream, run_mlp_learning_loop, NormalizerTrackingConfig
 )
 import jax.random as jr
 
 stream = RandomWalkStream(feature_dim=10)
-mlp = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0, sparsity=0.9)
-learner = NormalizedMLPLearner(mlp, normalizer=EMANormalizer(decay=0.99))
 
-# Without tracking: returns (state, metrics) — metrics shape (num_steps, 4)
-state, metrics = run_mlp_normalized_learning_loop(
-    learner, stream, num_steps=10000, key=jr.key(42)
+# LMS + ObGD bounding (equivalent to original Elsayed et al. 2024)
+learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, bounder=ObGDBounding(kappa=2.0))
+state, metrics = run_mlp_learning_loop(learner, stream, num_steps=10000, key=jr.key(42))
+
+# Autostep + ObGD bounding + normalization (composable)
+learner = MLPLearner(
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
 )
 
-# With normalizer tracking: returns (state, metrics, normalizer_history)
+# With normalizer tracking
 config = NormalizerTrackingConfig(interval=100)
-state, metrics, norm_history = run_mlp_normalized_learning_loop(
+state, metrics, norm_history = run_mlp_learning_loop(
     learner, stream, num_steps=10000, key=jr.key(42), normalizer_tracking=config
 )
 # norm_history.means: shape (100, 10), norm_history.variances: shape (100, 10)
-```
-
-Batched (vmap) version for multi-seed experiments:
-```python
-from alberta_framework import run_mlp_normalized_learning_loop_batched
-
-keys = jr.split(jr.key(42), 30)
-result = run_mlp_normalized_learning_loop_batched(
-    learner, stream, num_steps=10000, keys=keys
-)
-# result.metrics has shape (30, 10000, 4)
-# Columns: [squared_error, error, effective_step_size, normalizer_mean_var]
 ```
 
 ### Success Criterion
@@ -239,7 +222,7 @@ IDBD/Autostep should beat LMS when starting from the same step-size (demonstrate
 With optimal parameters, adaptive methods should match best grid-searched LMS.
 
 ### Step-Size Tracking for Meta-Adaptation Analysis
-The `run_learning_loop` and `run_normalized_learning_loop` functions support optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
+The `run_learning_loop` function supports optional per-weight step-size tracking for analyzing how adaptive optimizers evolve their step-sizes during training:
 
 ```python
 from alberta_framework import LinearLearner, IDBD, Autostep, StepSizeTrackingConfig, run_learning_loop
@@ -268,24 +251,24 @@ Key features:
 - **Autostep's normalizers (v_i)** are tracked automatically when using Autostep
 
 ### Normalizer State Tracking for Reactive Lag Analysis
-The `run_normalized_learning_loop` function supports tracking the normalizer's per-feature mean and variance estimates over time. This is essential for analyzing reactive lag — how quickly the normalizer adapts to distribution shifts:
+The `run_learning_loop` function supports tracking the normalizer's per-feature mean and variance estimates over time when the learner has a normalizer. This is essential for analyzing reactive lag — how quickly the normalizer adapts to distribution shifts:
 
 ```python
 from alberta_framework import (
-    NormalizedLinearLearner, IDBD,
+    LinearLearner, IDBD, EMANormalizer,
     StepSizeTrackingConfig, NormalizerTrackingConfig,
-    run_normalized_learning_loop
+    run_learning_loop
 )
 from alberta_framework.streams import RandomWalkStream
 import jax.random as jr
 
 stream = RandomWalkStream(feature_dim=10)
-learner = NormalizedLinearLearner(optimizer=IDBD())
+learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
 ss_config = StepSizeTrackingConfig(interval=100)
 norm_config = NormalizerTrackingConfig(interval=100)
 
 # Track both step-sizes and normalizer state
-state, metrics, ss_history, norm_history = run_normalized_learning_loop(
+state, metrics, ss_history, norm_history = run_learning_loop(
     learner, stream, num_steps=10000, key=jr.key(42),
     step_size_tracking=ss_config, normalizer_tracking=norm_config
 )
@@ -302,13 +285,13 @@ Return value depends on tracking options:
 - Both: `(state, metrics, ss_history, norm_history)` — 4-tuple
 
 ### Batched Learning Loops (vmap-based GPU Parallelization)
-The `run_learning_loop_batched` and `run_normalized_learning_loop_batched` functions use `jax.vmap` to run multiple seeds in parallel, typically achieving 2-5x speedup over sequential execution:
+The `run_learning_loop_batched` and `run_mlp_learning_loop_batched` functions use `jax.vmap` to run multiple seeds in parallel, typically achieving 2-5x speedup over sequential execution:
 
 ```python
 import jax.random as jr
 from alberta_framework import (
-    LinearLearner, IDBD, RandomWalkStream,
-    run_learning_loop_batched, StepSizeTrackingConfig
+    LinearLearner, IDBD, EMANormalizer, RandomWalkStream,
+    run_learning_loop_batched, StepSizeTrackingConfig, NormalizerTrackingConfig
 )
 
 stream = RandomWalkStream(feature_dim=10)
@@ -333,19 +316,14 @@ result = run_learning_loop_batched(
 Key features:
 - `jax.vmap` parallelizes over seeds, not steps — memory scales with num_seeds
 - `jax.lax.scan` processes steps sequentially within each seed
-- Returns `BatchedLearningResult`, `BatchedNormalizedResult`, or `BatchedMLPResult`
+- Returns `BatchedLearningResult` or `BatchedMLPResult`
 - Tracking histories get batched shapes: `(num_seeds, num_recordings, ...)`
 - Same initial state used for all seeds (controlled variation via different keys)
 
-For normalized learners:
+For normalized learners (same function, learner carries normalizer):
 ```python
-from alberta_framework import (
-    NormalizedLinearLearner, run_normalized_learning_loop_batched,
-    NormalizerTrackingConfig
-)
-
-learner = NormalizedLinearLearner(optimizer=IDBD())
-result = run_normalized_learning_loop_batched(
+learner = LinearLearner(optimizer=IDBD(), normalizer=EMANormalizer())
+result = run_learning_loop_batched(
     learner, stream, num_steps=10000, keys=keys,
     step_size_tracking=StepSizeTrackingConfig(interval=100),
     normalizer_tracking=NormalizerTrackingConfig(interval=100)
@@ -356,9 +334,9 @@ result = run_normalized_learning_loop_batched(
 
 For MLP learners:
 ```python
-from alberta_framework import MLPLearner, run_mlp_learning_loop_batched
+from alberta_framework import MLPLearner, ObGDBounding, run_mlp_learning_loop_batched
 
-learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, kappa=2.0)
+learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, bounder=ObGDBounding(kappa=2.0))
 keys = jr.split(jr.key(42), 30)
 result = run_mlp_learning_loop_batched(learner, stream, num_steps=10000, keys=keys)
 # result.metrics has shape (30, 10000, 3)
@@ -376,8 +354,7 @@ Wrap Gymnasium RL environments as experience streams for the framework.
 
 ### Key Functions
 - `collect_trajectory(env, policy, num_steps, mode, ...)`: Collect trajectory using Python loop
-- `learn_from_trajectory(learner, observations, targets)`: Learn from trajectory using scan
-- `learn_from_trajectory_normalized(learner, observations, targets)`: With normalization
+- `learn_from_trajectory(learner, observations, targets)`: Learn from trajectory using scan (handles normalization automatically if learner has normalizer)
 - `make_gymnasium_stream(env_id, mode, ...)`: Create stream from env ID (for Python loops)
 - `make_random_policy(env, seed)`: Create random action policy
 - `make_epsilon_greedy_policy(base, env, epsilon, seed)`: Wrap policy with exploration
@@ -592,6 +569,24 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.7.0 (2026-02-07)
+- **BREAKING**: Removed `NormalizedLinearLearner`, `NormalizedMLPLearner` — use `LinearLearner(normalizer=...)` and `MLPLearner(normalizer=...)` instead
+- **BREAKING**: Removed `run_normalized_learning_loop`, `run_normalized_learning_loop_batched`, `run_mlp_normalized_learning_loop`, `run_mlp_normalized_learning_loop_batched` — unified into `run_learning_loop` and `run_mlp_learning_loop` (detect normalization from learner)
+- **BREAKING**: Removed `NormalizedLearnerState`, `NormalizedMLPLearnerState`, `NormalizedMLPUpdateResult`, `BatchedNormalizedResult`, `BatchedMLPNormalizedResult`, `MLPObGDState` types
+- **BREAKING**: `MLPLearner` no longer accepts `kappa` parameter — use `bounder=ObGDBounding(kappa=2.0)` instead
+- **FEATURE**: `Bounder` ABC and `ObGDBounding` for decoupled update bounding (composable with any optimizer)
+- **FEATURE**: `AutostepParamState` for per-parameter Autostep optimization (arbitrary array shapes)
+- **FEATURE**: `Optimizer.init_for_shape()` and `Optimizer.update_from_gradient()` for shape-agnostic optimization (LMS, Autostep)
+- **FEATURE**: `MLPLearner` now accepts composable `optimizer`, `bounder`, and `normalizer` parameters
+- **FEATURE**: `LinearLearner` now accepts optional `bounder` and `normalizer` parameters
+- **FEATURE**: Unified learning loops: 4 functions instead of 8 (linear + MLP, each with single + batched)
+- **FIX**: mypy override errors — base class `init_for_shape`/`update_from_gradient` use `Any` since return type varies by subclass
+- **DOCS**: Updated README with composable architecture, MLP Learner, Bounders, Normalizers, stability disclaimer, and Elsayed et al. 2024 reference
+- **DOCS**: Updated CLAUDE.md with v0.7.0 API changes throughout
+
+### v0.6.1 (2026-02-07)
+- Version bump only
 
 ### v0.6.0 (2026-02-07)
 - **BREAKING**: Replaced `OnlineNormalizer`, `NormalizerState`, `create_normalizer_state` with `Normalizer` ABC hierarchy

@@ -40,7 +40,7 @@ References
 - Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 # Core types
 # Learners
@@ -50,11 +50,6 @@ from alberta_framework.core.learners import (
     LinearLearner,
     MLPLearner,
     MLPUpdateResult,
-    NormalizedLearnerState,
-    NormalizedLinearLearner,
-    NormalizedMLPLearner,
-    NormalizedMLPLearnerState,
-    NormalizedMLPUpdateResult,
     TDLinearLearner,
     TDUpdateResult,
     UpdateResult,
@@ -63,10 +58,6 @@ from alberta_framework.core.learners import (
     run_learning_loop_batched,
     run_mlp_learning_loop,
     run_mlp_learning_loop_batched,
-    run_mlp_normalized_learning_loop,
-    run_mlp_normalized_learning_loop_batched,
-    run_normalized_learning_loop,
-    run_normalized_learning_loop_batched,
     run_td_learning_loop,
 )
 
@@ -87,23 +78,23 @@ from alberta_framework.core.optimizers import (
     TDIDBD,
     Autostep,
     AutoTDIDBD,
+    Bounder,
     ObGD,
+    ObGDBounding,
     Optimizer,
     TDOptimizer,
     TDOptimizerUpdate,
 )
 from alberta_framework.core.types import (
+    AutostepParamState,
     AutostepState,
     AutoTDIDBDState,
     BatchedLearningResult,
-    BatchedMLPNormalizedResult,
     BatchedMLPResult,
-    BatchedNormalizedResult,
     IDBDState,
     LearnerState,
     LMSState,
     MLPLearnerState,
-    MLPObGDState,
     MLPParams,
     NormalizerHistory,
     NormalizerTrackingConfig,
@@ -182,9 +173,9 @@ __all__ = [
     # Version
     "__version__",
     # Types - Supervised Learning
+    "AutostepParamState",
     "AutostepState",
     "BatchedLearningResult",
-    "BatchedNormalizedResult",
     "IDBDState",
     "LMSState",
     "LearnerState",
@@ -202,14 +193,10 @@ __all__ = [
     "TimeStep",
     "UpdateResult",
     # Types - MLP
-    "BatchedMLPNormalizedResult",
     "BatchedMLPResult",
     "MLPLearnerState",
-    "MLPObGDState",
     "MLPParams",
     "MLPUpdateResult",
-    "NormalizedMLPLearnerState",
-    "NormalizedMLPUpdateResult",
     # Types - TD Learning
     "AutoTDIDBDState",
     "TDIDBDState",
@@ -221,9 +208,11 @@ __all__ = [
     "create_autotdidbd_state",
     # Optimizers - Supervised Learning
     "Autostep",
+    "Bounder",
     "IDBD",
     "LMS",
     "ObGD",
+    "ObGDBounding",
     "Optimizer",
     # Optimizers - TD Learning
     "AutoTDIDBD",
@@ -238,20 +227,13 @@ __all__ = [
     "WelfordNormalizer",
     # Learners - Supervised Learning
     "LinearLearner",
-    "NormalizedLearnerState",
-    "NormalizedLinearLearner",
     "run_learning_loop",
     "run_learning_loop_batched",
-    "run_normalized_learning_loop",
-    "run_normalized_learning_loop_batched",
     "metrics_to_dicts",
     # Learners - MLP
     "MLPLearner",
-    "NormalizedMLPLearner",
     "run_mlp_learning_loop",
     "run_mlp_learning_loop_batched",
-    "run_mlp_normalized_learning_loop",
-    "run_mlp_normalized_learning_loop_batched",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",

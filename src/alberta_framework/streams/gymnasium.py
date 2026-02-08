@@ -24,13 +24,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 
-from alberta_framework.core.learners import LinearLearner, NormalizedLinearLearner
+from alberta_framework.core.learners import LinearLearner
 from alberta_framework.core.types import LearnerState, TimeStep
 
 if TYPE_CHECKING:
     import gymnasium
-
-    from alberta_framework.core.learners import NormalizedLearnerState
 
 
 class PredictionMode(Enum):
@@ -290,15 +288,19 @@ def learn_from_trajectory(
 
 
 def learn_from_trajectory_normalized(
-    learner: NormalizedLinearLearner,
+    learner: LinearLearner,
     observations: Array,
     targets: Array,
-    learner_state: NormalizedLearnerState | None = None,
-) -> tuple[NormalizedLearnerState, Array]:
+    learner_state: LearnerState | None = None,
+) -> tuple[LearnerState, Array]:
     """Learn from a pre-collected trajectory with normalization using jax.lax.scan.
 
+    This is equivalent to ``learn_from_trajectory`` for a learner constructed
+    with a normalizer (e.g. ``LinearLearner(optimizer=..., normalizer=EMANormalizer())``).
+    Retained for backward compatibility.
+
     Args:
-        learner: The normalized learner to train
+        learner: The learner to train (should have a normalizer configured)
         observations: Array of observations with shape (num_steps, feature_dim)
         targets: Array of targets with shape (num_steps, target_dim)
         learner_state: Initial state (if None, will be initialized)
@@ -307,19 +309,7 @@ def learn_from_trajectory_normalized(
         Tuple of (final_state, metrics_array) where metrics_array has shape
         (num_steps, 4) with columns [squared_error, error, mean_step_size, normalizer_mean_var]
     """
-    if learner_state is None:
-        learner_state = learner.init(observations.shape[1])
-
-    def step_fn(
-        state: NormalizedLearnerState, inputs: tuple[Array, Array]
-    ) -> tuple[NormalizedLearnerState, Array]:
-        obs, target = inputs
-        result = learner.update(state, obs, target)
-        return result.state, result.metrics
-
-    final_state, metrics = jax.lax.scan(step_fn, learner_state, (observations, targets))
-
-    return final_state, metrics
+    return learn_from_trajectory(learner, observations, targets, learner_state)
 
 
 class GymnasiumStream:

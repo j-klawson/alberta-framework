@@ -22,13 +22,12 @@ from jax import Array
 
 from alberta_framework import (
     IDBD,
+    EMANormalizer,
     LinearLearner,
-    NormalizedLinearLearner,
     Timer,
     compare_learners,
     metrics_to_dicts,
     run_learning_loop,
-    run_normalized_learning_loop,
 )
 from alberta_framework.core.types import TimeStep
 
@@ -134,10 +133,11 @@ def run_normalization_experiment(
         key = jr.key(seed)
 
         if use_normalization:
-            learner = NormalizedLinearLearner(
-                optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
+            learner = LinearLearner(
+                optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05),
+                normalizer=EMANormalizer(),
             )
-            _, metrics = run_normalized_learning_loop(learner, stream, num_steps, key)
+            _, metrics = run_learning_loop(learner, stream, num_steps, key)
             results[name] = metrics_to_dicts(metrics, normalized=True)
         else:
             learner = LinearLearner(
@@ -224,11 +224,12 @@ def run_scale_sensitivity_study(
             feature_dim=feature_dim,
             feature_scales=scales,
         )
-        learner = NormalizedLinearLearner(
-            optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05)
+        learner = LinearLearner(
+            optimizer=IDBD(initial_step_size=0.05, meta_step_size=0.05),
+            normalizer=EMANormalizer(),
         )
         key = jr.key(seed)
-        _, metrics_norm = run_normalized_learning_loop(learner, stream, num_steps, key)
+        _, metrics_norm = run_learning_loop(learner, stream, num_steps, key)
         metrics_norm = metrics_to_dicts(metrics_norm, normalized=True)
 
         no_norm_error = sum(m["squared_error"] for m in metrics_no_norm)

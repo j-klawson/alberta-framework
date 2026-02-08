@@ -13,11 +13,8 @@ from numpy.typing import NDArray
 
 from alberta_framework.core.learners import (
     LinearLearner,
-    NormalizedLearnerState,
-    NormalizedLinearLearner,
     metrics_to_dicts,
     run_learning_loop,
-    run_normalized_learning_loop,
 )
 from alberta_framework.core.types import LearnerState
 from alberta_framework.streams.base import ScanStream
@@ -34,7 +31,7 @@ class ExperimentConfig(NamedTuple):
     """
 
     name: str
-    learner_factory: Callable[[], LinearLearner | NormalizedLinearLearner]
+    learner_factory: Callable[[], LinearLearner]
     stream_factory: Callable[[], ScanStream[Any]]
     num_steps: int
 
@@ -52,7 +49,7 @@ class SingleRunResult(NamedTuple):
     config_name: str
     seed: int
     metrics_history: list[dict[str, float]]
-    final_state: LearnerState | NormalizedLearnerState
+    final_state: LearnerState
 
 
 class MetricSummary(NamedTuple):
@@ -108,15 +105,10 @@ def run_single_experiment(
     stream = config.stream_factory()
     key = jr.key(seed)
 
-    final_state: LearnerState | NormalizedLearnerState
-    if isinstance(learner, NormalizedLinearLearner):
-        norm_result = run_normalized_learning_loop(learner, stream, config.num_steps, key)
-        final_state, metrics = cast(tuple[NormalizedLearnerState, Any], norm_result)
-        metrics_history = metrics_to_dicts(metrics, normalized=True)
-    else:
-        linear_result = run_learning_loop(learner, stream, config.num_steps, key)
-        final_state, metrics = cast(tuple[LearnerState, Any], linear_result)
-        metrics_history = metrics_to_dicts(metrics)
+    result = run_learning_loop(learner, stream, config.num_steps, key)
+    final_state, metrics = cast(tuple[LearnerState, Any], result)
+    normalized = learner.normalizer is not None
+    metrics_history = metrics_to_dicts(metrics, normalized=normalized)
 
     return SingleRunResult(
         config_name=config.name,

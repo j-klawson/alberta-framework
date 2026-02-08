@@ -4,15 +4,14 @@ This module defines the core data types used throughout the framework,
 using chex dataclasses for JAX compatibility and jaxtyping for shape annotations.
 """
 
-from typing import TYPE_CHECKING
-
 import chex
 import jax.numpy as jnp
 from jax import Array
 from jaxtyping import Float, Int
 
-if TYPE_CHECKING:
-    from alberta_framework.core.learners import NormalizedLearnerState, NormalizedMLPLearnerState
+from alberta_framework.core.normalizers import (
+    AnyNormalizerState,
+)
 
 # Type aliases for clarity
 Observation = Array  # x_t: feature vector
@@ -103,6 +102,30 @@ class AutostepState:
 
 
 @chex.dataclass(frozen=True)
+class AutostepParamState:
+    """Per-parameter Autostep state for use with arbitrary-shape parameters.
+
+    Used by ``Autostep.init_for_shape`` / ``Autostep.update_from_gradient``
+    for MLP (or other multi-parameter) learners. Unlike ``AutostepState``,
+    this type has no bias-specific fields -- each parameter (weight matrix,
+    bias vector) gets its own ``AutostepParamState``.
+
+    Attributes:
+        step_sizes: Per-element step-sizes, same shape as the parameter
+        traces: Per-element traces for gradient correlation
+        normalizers: Running max absolute gradient per element
+        meta_step_size: Meta learning rate mu
+        normalizer_decay: Decay factor tau for normalizers
+    """
+
+    step_sizes: Array  # same shape as the parameter
+    traces: Array  # same shape as the parameter
+    normalizers: Array  # same shape as the parameter
+    meta_step_size: Float[Array, ""]
+    normalizer_decay: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
 class ObGDState:
     """State for the ObGD (Observation-bounded Gradient Descent) optimizer.
 
@@ -142,11 +165,13 @@ class LearnerState:
         weights: Weight vector for linear prediction
         bias: Bias term
         optimizer_state: State maintained by the optimizer
+        normalizer_state: Optional state for online feature normalization
     """
 
     weights: Float[Array, " feature_dim"]
     bias: Float[Array, ""]
     optimizer_state: LMSState | IDBDState | AutostepState | ObGDState
+    normalizer_state: AnyNormalizerState | None = None
 
 
 @chex.dataclass(frozen=True)
@@ -214,41 +239,22 @@ class NormalizerHistory:
 class BatchedLearningResult:
     """Result from batched learning loop across multiple seeds.
 
-    Used with `run_learning_loop_batched` for vmap-based GPU parallelization.
+    Used with ``run_learning_loop_batched`` for vmap-based GPU parallelization.
 
     Attributes:
         states: Batched learner states - each array has shape (num_seeds, ...)
-        metrics: Metrics array with shape (num_seeds, num_steps, 3)
-            where columns are [squared_error, error, mean_step_size]
-        step_size_history: Optional step-size history with batched shapes,
-            or None if tracking was disabled
-    """
-
-    states: LearnerState  # Batched: each array has shape (num_seeds, ...)
-    metrics: Float[Array, "num_seeds num_steps 3"]
-    step_size_history: StepSizeHistory | None
-
-
-@chex.dataclass(frozen=True)
-class BatchedNormalizedResult:
-    """Result from batched normalized learning loop across multiple seeds.
-
-    Used with `run_normalized_learning_loop_batched` for vmap-based GPU parallelization.
-
-    Attributes:
-        states: Batched normalized learner states - each array has shape (num_seeds, ...)
-        metrics: Metrics array with shape (num_seeds, num_steps, 4)
-            where columns are [squared_error, error, mean_step_size, normalizer_mean_var]
+        metrics: Metrics array with shape (num_seeds, num_steps, num_cols)
+            where num_cols is 3 (no normalizer) or 4 (with normalizer)
         step_size_history: Optional step-size history with batched shapes,
             or None if tracking was disabled
         normalizer_history: Optional normalizer history with batched shapes,
             or None if tracking was disabled
     """
 
-    states: "NormalizedLearnerState"  # Batched: each array has shape (num_seeds, ...)
-    metrics: Float[Array, "num_seeds num_steps 4"]
+    states: LearnerState  # Batched: each array has shape (num_seeds, ...)
+    metrics: Array
     step_size_history: StepSizeHistory | None
-    normalizer_history: NormalizerHistory | None
+    normalizer_history: NormalizerHistory | None = None
 
 
 def create_lms_state(step_size: float = 0.01) -> LMSState:
@@ -308,75 +314,39 @@ class MLPParams:
 
 
 @chex.dataclass(frozen=True)
-class MLPObGDState:
-    """ObGD optimizer state for MLP learners.
-
-    Maintains per-parameter eligibility traces for each layer.
-
-    Attributes:
-        step_size: Base learning rate alpha
-        kappa: Bounding sensitivity parameter
-        weight_traces: Tuple of per-layer weight eligibility traces
-        bias_traces: Tuple of per-layer bias eligibility traces
-        gamma: Discount factor for trace decay
-        lamda: Eligibility trace decay parameter lambda
-    """
-
-    step_size: Float[Array, ""]
-    kappa: Float[Array, ""]
-    weight_traces: tuple[Array, ...]
-    bias_traces: tuple[Array, ...]
-    gamma: Float[Array, ""]
-    lamda: Float[Array, ""]
-
-
-@chex.dataclass(frozen=True)
 class MLPLearnerState:
     """State for an MLP learner.
 
     Attributes:
         params: MLP parameters (weights and biases for each layer)
-        optimizer_state: ObGD optimizer state with per-layer traces
+        optimizer_states: Tuple of per-parameter optimizer states (weights + biases)
+        traces: Tuple of per-parameter eligibility traces
+        normalizer_state: Optional state for online feature normalization
     """
 
     params: MLPParams
-    optimizer_state: MLPObGDState
+    optimizer_states: tuple[LMSState | AutostepState | AutostepParamState, ...]
+    traces: tuple[Array, ...]
+    normalizer_state: AnyNormalizerState | None = None
 
 
 @chex.dataclass(frozen=True)
 class BatchedMLPResult:
     """Result from batched MLP learning loop across multiple seeds.
 
-    Used with `run_mlp_learning_loop_batched` for vmap-based GPU parallelization.
+    Used with ``run_mlp_learning_loop_batched`` for vmap-based GPU parallelization.
 
     Attributes:
         states: Batched MLP learner states - each array has shape (num_seeds, ...)
-        metrics: Metrics array with shape (num_seeds, num_steps, 3)
-            where columns are [squared_error, error, effective_step_size]
-    """
-
-    states: MLPLearnerState  # Batched: each array has shape (num_seeds, ...)
-    metrics: Float[Array, "num_seeds num_steps 3"]
-
-
-@chex.dataclass(frozen=True)
-class BatchedMLPNormalizedResult:
-    """Result from batched normalized MLP learning loop across multiple seeds.
-
-    Used with `run_mlp_normalized_learning_loop_batched` for vmap-based
-    GPU parallelization.
-
-    Attributes:
-        states: Batched normalized MLP learner states - each array has shape (num_seeds, ...)
-        metrics: Metrics array with shape (num_seeds, num_steps, 4)
-            where columns are [squared_error, error, effective_step_size, normalizer_mean_var]
+        metrics: Metrics array with shape (num_seeds, num_steps, num_cols)
+            where num_cols is 3 (no normalizer) or 4 (with normalizer)
         normalizer_history: Optional normalizer history with batched shapes,
             or None if tracking was disabled
     """
 
-    states: "NormalizedMLPLearnerState"  # Batched: each array has shape (num_seeds, ...)
-    metrics: Float[Array, "num_seeds num_steps 4"]
-    normalizer_history: NormalizerHistory | None
+    states: MLPLearnerState  # Batched: each array has shape (num_seeds, ...)
+    metrics: Array
+    normalizer_history: NormalizerHistory | None = None
 
 
 # =============================================================================
@@ -391,10 +361,10 @@ class TDTimeStep:
     Represents a transition (s, r, s', gamma) for temporal-difference learning.
 
     Attributes:
-        observation: Feature vector φ(s)
+        observation: Feature vector phi(s)
         reward: Reward R received
-        next_observation: Feature vector φ(s')
-        gamma: Discount factor γ_t (0 at terminal states)
+        next_observation: Feature vector phi(s')
+        gamma: Discount factor gamma_t (0 at terminal states)
     """
 
     observation: Float[Array, " feature_dim"]
