@@ -214,7 +214,9 @@ LeCun-scale initialization with per-neuron sparsity:
 Reference: Elsayed et al. 2024
 
 Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)`
-- Parameterless layer normalization (no learned scale/shift)
+
+When `use_layer_norm=False`: `Input -> [Dense(H) -> LeakyReLU] x N -> Dense(1)`
+- Parameterless layer normalization (no learned scale/shift), toggleable via `use_layer_norm`
 - Sparse initialization (90% default)
 - Composable: accepts any `Optimizer`, optional `Bounder`, optional `Normalizer`
 - Gradient computation via `jax.grad` on pure forward function
@@ -247,6 +249,10 @@ state, metrics, norm_history = run_mlp_learning_loop(
     learner, stream, num_steps=10000, key=jr.key(42), normalizer_tracking=config
 )
 # norm_history.means: shape (100, 10), norm_history.variances: shape (100, 10)
+
+# LayerNorm ablation study (disable internal layer normalization)
+learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, use_layer_norm=False,
+                     bounder=ObGDBounding(kappa=2.0))
 ```
 
 ### Success Criterion
@@ -601,6 +607,9 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.7.3 (2026-02-09)
+- **FEATURE**: `MLPLearner(use_layer_norm=False)` — toggle parameterless LayerNorm for ablation studies (default `True`, backwards-compatible)
 
 ### v0.7.2 (2026-02-08)
 - **FIX**: IDBD operation ordering now matches Sutton 1992 Figure 2: meta-update first, then NEW alpha for weight and trace updates

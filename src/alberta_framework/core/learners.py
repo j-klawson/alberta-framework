@@ -751,6 +751,9 @@ class MLPLearner:
 
     Architecture: ``Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> Dense(1)``
 
+    When ``use_layer_norm=False``, the architecture simplifies to:
+    ``Input -> [Dense(H) -> LeakyReLU] x N -> Dense(1)``
+
     Uses parameterless layer normalization and sparse initialization following
     Elsayed et al. 2024. Accepts a pluggable optimizer (LMS, Autostep), an
     optional bounder (ObGDBounding), and an optional feature normalizer
@@ -772,6 +775,7 @@ class MLPLearner:
         optimizer: Optimizer for per-weight step-size adaptation
         bounder: Optional update bounder (e.g. ObGDBounding)
         normalizer: Optional feature normalizer
+        use_layer_norm: Whether to apply parameterless layer normalization
         gamma: Discount factor for trace decay
         lamda: Eligibility trace decay parameter
         sparsity: Fraction of weights zeroed out per output neuron
@@ -791,6 +795,7 @@ class MLPLearner:
         ) = None,
         sparsity: float = 0.9,
         leaky_relu_slope: float = 0.01,
+        use_layer_norm: bool = True,
     ):
         """Initialize MLP learner.
 
@@ -808,6 +813,9 @@ class MLPLearner:
                 normalized before prediction and learning.
             sparsity: Fraction of weights zeroed out per output neuron (default: 0.9)
             leaky_relu_slope: Negative slope for LeakyReLU (default: 0.01)
+            use_layer_norm: Whether to apply parameterless layer normalization
+                between hidden layers (default: True). Set to False for ablation
+                studies.
         """
         self._hidden_sizes = hidden_sizes
         self._optimizer: AnyOptimizer = optimizer or LMS(step_size=step_size)
@@ -817,6 +825,7 @@ class MLPLearner:
         self._normalizer = normalizer
         self._sparsity = sparsity
         self._leaky_relu_slope = leaky_relu_slope
+        self._use_layer_norm = use_layer_norm
 
     @property
     def normalizer(
@@ -880,6 +889,7 @@ class MLPLearner:
         biases: tuple[Array, ...],
         observation: Array,
         leaky_relu_slope: float,
+        use_layer_norm: bool = True,
     ) -> Array:
         """Pure forward pass for use with jax.grad.
 
@@ -888,6 +898,7 @@ class MLPLearner:
             biases: Tuple of bias vectors
             observation: Input feature vector
             leaky_relu_slope: Negative slope for LeakyReLU
+            use_layer_norm: Whether to apply parameterless layer normalization
 
         Returns:
             Scalar prediction
@@ -896,10 +907,11 @@ class MLPLearner:
         num_layers = len(weights)
         for i in range(num_layers - 1):
             x = weights[i] @ x + biases[i]
-            # Parameterless layer normalization
-            mean = jnp.mean(x)
-            var = jnp.var(x)
-            x = (x - mean) / jnp.sqrt(var + 1e-5)
+            if use_layer_norm:
+                # Parameterless layer normalization
+                mean = jnp.mean(x)
+                var = jnp.var(x)
+                x = (x - mean) / jnp.sqrt(var + 1e-5)
             # LeakyReLU
             x = jnp.where(x >= 0, x, leaky_relu_slope * x)
         # Output layer (no activation)
@@ -921,6 +933,7 @@ class MLPLearner:
             state.params.biases,
             observation,
             self._leaky_relu_slope,
+            self._use_layer_norm,
         )
         return jnp.atleast_1d(y)
 
@@ -965,15 +978,17 @@ class MLPLearner:
             state.params.biases,
             obs,
             self._leaky_relu_slope,
+            self._use_layer_norm,
         )
         prediction = jnp.atleast_1d(prediction_val)
         error = target_scalar - prediction_val
 
         # Compute gradients w.r.t. prediction
         slope = self._leaky_relu_slope
+        ln = self._use_layer_norm
 
         def pred_fn(weights: tuple[Array, ...], biases: tuple[Array, ...]) -> Array:
-            return self._forward(weights, biases, obs, slope)
+            return self._forward(weights, biases, obs, slope, ln)
 
         weight_grads, bias_grads = jax.grad(pred_fn, argnums=(0, 1))(
             state.params.weights, state.params.biases

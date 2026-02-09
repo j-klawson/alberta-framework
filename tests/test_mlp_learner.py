@@ -652,3 +652,84 @@ class TestAGCBounding:
         final_error = abs(float(learner.predict(state, observation)[0]) - 2.0)
 
         assert final_error < initial_error
+
+
+class TestLayerNormToggle:
+    """Tests for the use_layer_norm parameter on MLPLearner."""
+
+    def test_layer_norm_disabled_runs(self):
+        """MLPLearner with use_layer_norm=False can init, predict, and update."""
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, use_layer_norm=False,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        observation = jnp.ones(5)
+        target = jnp.array([1.0])
+
+        prediction = learner.predict(state, observation)
+        chex.assert_shape(prediction, (1,))
+        chex.assert_tree_all_finite(prediction)
+
+        result = learner.update(state, observation, target)
+        chex.assert_shape(result.prediction, (1,))
+        chex.assert_shape(result.error, (1,))
+        chex.assert_shape(result.metrics, (3,))
+        chex.assert_tree_all_finite(result.metrics)
+
+    def test_layer_norm_disabled_different_predictions(self):
+        """Predictions differ between use_layer_norm=True and False."""
+        learner_ln = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, use_layer_norm=True,
+        )
+        learner_no_ln = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, use_layer_norm=False,
+        )
+
+        # Same key -> same initial weights
+        state_ln = learner_ln.init(feature_dim=5, key=jr.key(42))
+        state_no_ln = learner_no_ln.init(feature_dim=5, key=jr.key(42))
+
+        observation = jnp.array([1.0, 0.5, -0.3, 0.2, 0.8])
+
+        pred_ln = learner_ln.predict(state_ln, observation)
+        pred_no_ln = learner_no_ln.predict(state_no_ln, observation)
+
+        assert not jnp.allclose(pred_ln, pred_no_ln)
+
+    def test_layer_norm_default_true(self):
+        """Default MLPLearner should use layer norm (backwards compatible)."""
+        learner_default = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        learner_explicit = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, use_layer_norm=True,
+        )
+
+        state_default = learner_default.init(feature_dim=5, key=jr.key(42))
+        state_explicit = learner_explicit.init(feature_dim=5, key=jr.key(42))
+
+        observation = jnp.array([1.0, 0.5, -0.3, 0.2, 0.8])
+
+        pred_default = learner_default.predict(state_default, observation)
+        pred_explicit = learner_explicit.predict(state_explicit, observation)
+
+        chex.assert_trees_all_close(pred_default, pred_explicit)
+
+    def test_layer_norm_disabled_batched(self):
+        """run_mlp_learning_loop_batched works with use_layer_norm=False."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0, use_layer_norm=False,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        num_seeds = 3
+        num_steps = 50
+
+        keys = jr.split(jr.key(42), num_seeds)
+        result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=num_steps, keys=keys
+        )
+
+        assert isinstance(result, BatchedMLPResult)
+        chex.assert_shape(result.metrics, (num_seeds, num_steps, 3))
+        chex.assert_tree_all_finite(result.metrics)
