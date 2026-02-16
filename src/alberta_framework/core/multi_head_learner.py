@@ -16,6 +16,7 @@ Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally W
 """
 
 import math
+from typing import Any
 
 import chex
 import jax
@@ -93,9 +94,9 @@ class MultiHeadMLPState:
     trunk_params: MLPParams
     head_params: MLPParams
     trunk_optimizer_states: tuple[LMSState | AutostepState | AutostepParamState, ...]
-    head_optimizer_states: tuple  # tuple of (w_opt, b_opt) tuples
+    head_optimizer_states: tuple[Any, ...]  # tuple of (w_opt, b_opt) tuples
     trunk_traces: tuple[Array, ...]
-    head_traces: tuple  # tuple of (w_trace, b_trace) tuples
+    head_traces: tuple[Any, ...]  # tuple of (w_trace, b_trace) tuples
     normalizer_state: AnyNormalizerState | None = None
     step_count: Array = None  # type: ignore[assignment]
 
@@ -292,7 +293,7 @@ class MultiHeadMLPLearner:
         head_weights: list[Array] = []
         head_biases: list[Array] = []
         head_traces_list: list[tuple[Array, Array]] = []
-        head_opt_states_list: list[tuple] = []
+        head_opt_states_list: list[tuple[Any, ...]] = []
 
         for _ in range(self._n_heads):
             key, subkey = jax.random.split(key)
@@ -543,7 +544,7 @@ class MultiHeadMLPLearner:
         new_head_weights: list[Array] = []
         new_head_biases: list[Array] = []
         new_head_traces_list: list[tuple[Array, Array]] = []
-        new_head_opt_states_list: list[tuple] = []
+        new_head_opt_states_list: list[tuple[Any, ...]] = []
         per_head_metrics_list: list[Array] = []
 
         for i in range(n_heads):
