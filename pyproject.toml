@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "alberta-framework"
-version = "0.7.4"
+version = "0.8.0"
 description = "Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -127,6 +127,10 @@ disable_error_code = ["call-arg"]
 
 [[tool.mypy.overrides]]
 module = "alberta_framework.core.learners"
+disable_error_code = ["call-arg", "arg-type", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "alberta_framework.core.multi_head_learner"
 disable_error_code = ["call-arg", "arg-type", "union-attr"]
 
 [[tool.mypy.overrides]]

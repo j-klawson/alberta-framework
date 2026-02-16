@@ -28,7 +28,8 @@ src/alberta_framework/
 │   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers; Bounder ABC, ObGDBounding, AGCBounding
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
-│   └── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
+│   ├── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
+│   └── multi_head_learner.py  # MultiHeadMLPLearner, multi-head learning loops
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -253,6 +254,57 @@ state, metrics, norm_history = run_mlp_learning_loop(
 # LayerNorm ablation study (disable internal layer normalization)
 learner = MLPLearner(hidden_sizes=(128, 128), step_size=1.0, use_layer_norm=False,
                      bounder=ObGDBounding(kappa=2.0))
+```
+
+### Multi-Head MLP Learner
+Shared-trunk, multi-head MLP for multi-task continual learning. Designed for chronos-sec Phase 2 where a single network predicts multiple targets simultaneously.
+
+Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> {Head_i: Dense(1)} x n_heads`
+
+- Shared hidden trunk with independent per-head output layers
+- VJP with accumulated cotangents: one backward pass through trunk regardless of n_heads
+- NaN targets mark inactive heads (params/traces/optimizer states preserved)
+- Same composability as MLPLearner (Optimizer, Bounder, Normalizer)
+- Learning loops take pre-provided observations/targets arrays (no ScanStream)
+
+```python
+from alberta_framework import (
+    MultiHeadMLPLearner, ObGDBounding, EMANormalizer, Autostep,
+    run_multi_head_learning_loop, run_multi_head_learning_loop_batched,
+    multi_head_metrics_to_dicts,
+)
+import jax.numpy as jnp
+import jax.random as jr
+
+# 4-head learner (e.g., event type, bot detection, attack stage, session value)
+learner = MultiHeadMLPLearner(
+    n_heads=4,
+    hidden_sizes=(128, 128),
+    optimizer=Autostep(),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+state = learner.init(feature_dim=20, key=jr.key(42))
+
+# Single update with partial active heads (head 2 inactive)
+obs = jnp.ones(20)
+targets = jnp.array([1.0, 0.5, jnp.nan, 3.0])  # NaN = inactive
+result = learner.update(state, obs, targets)
+# result.per_head_metrics: (4, 3) — [se, error, mean_step_size], NaN for inactive
+
+# Convert to dicts for online use
+dicts = multi_head_metrics_to_dicts(result)  # [dict, dict, None, dict]
+
+# Scan loop over pre-provided data
+observations = jr.normal(jr.key(1), (1000, 20))
+targets = jr.normal(jr.key(2), (1000, 4))
+loop_result = run_multi_head_learning_loop(learner, state, observations, targets)
+# loop_result.per_head_metrics: (1000, 4, 3)
+
+# Batched (vmap over init keys)
+keys = jr.split(jr.key(42), 30)
+batched = run_multi_head_learning_loop_batched(learner, observations, targets, keys)
+# batched.per_head_metrics: (30, 1000, 4, 3)
 ```
 
 ### Success Criterion
@@ -607,6 +659,17 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.8.0 (2026-02-16)
+- **FEATURE**: `MultiHeadMLPLearner` — shared-trunk MLP with multiple prediction heads for multi-task continual learning
+  - VJP-based gradient computation with accumulated cotangents (single backward pass through trunk)
+  - NaN target masking for selective head activation (inactive heads skip gradient updates)
+  - Composable: accepts any `Optimizer`, optional `Bounder`, optional `Normalizer`
+  - Eligibility traces managed per-head and per-trunk-layer
+- **FEATURE**: `MultiHeadMLPState`, `MultiHeadMLPUpdateResult`, `MultiHeadLearningResult`, `BatchedMultiHeadResult` types
+- **FEATURE**: `run_multi_head_learning_loop()` — `jax.lax.scan` over observation/target arrays with NaN masking
+- **FEATURE**: `run_multi_head_learning_loop_batched()` — `jax.vmap` over initialization keys for multi-seed parallelization
+- **FEATURE**: `multi_head_metrics_to_dicts()` — convert array metrics to per-head dicts for online use
 
 ### v0.7.3 (2026-02-09)
 - **FEATURE**: `MLPLearner(use_layer_norm=False)` — toggle parameterless LayerNorm for ablation studies (default `True`, backwards-compatible)

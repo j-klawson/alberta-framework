@@ -40,7 +40,7 @@ References
 - Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 # Core types
 # Learners
@@ -59,6 +59,18 @@ from alberta_framework.core.learners import (
     run_mlp_learning_loop,
     run_mlp_learning_loop_batched,
     run_td_learning_loop,
+)
+
+# Multi-head learner
+from alberta_framework.core.multi_head_learner import (
+    BatchedMultiHeadResult,
+    MultiHeadLearningResult,
+    MultiHeadMLPLearner,
+    MultiHeadMLPState,
+    MultiHeadMLPUpdateResult,
+    multi_head_metrics_to_dicts,
+    run_multi_head_learning_loop,
+    run_multi_head_learning_loop_batched,
 )
 
 # Normalizers
@@ -236,6 +248,15 @@ __all__ = [
     "MLPLearner",
     "run_mlp_learning_loop",
     "run_mlp_learning_loop_batched",
+    # Learners - Multi-Head MLP
+    "BatchedMultiHeadResult",
+    "MultiHeadLearningResult",
+    "MultiHeadMLPLearner",
+    "MultiHeadMLPState",
+    "MultiHeadMLPUpdateResult",
+    "multi_head_metrics_to_dicts",
+    "run_multi_head_learning_loop",
+    "run_multi_head_learning_loop_batched",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",
