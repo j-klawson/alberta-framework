@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import tempfile
 
-import dm_env
 import numpy as np
 import pytest
-from dm_env import specs
 
-from benchmarks.bsuite.wrappers import ContinuingWrapper
+dm_env = pytest.importorskip("dm_env", reason="dm_env not installed (install with bsuite extra)")
+pytest.importorskip("bsuite", reason="bsuite not installed")
+from dm_env import specs  # noqa: E402
+
+from benchmarks.bsuite.wrappers import ContinuingWrapper  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Minimal stub environment for unit tests (no bsuite import needed)
