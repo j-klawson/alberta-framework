@@ -41,6 +41,19 @@ src/alberta_framework/
     ├── visualization.py # Publication plots (requires matplotlib)
     ├── export.py       # CSV, JSON, LaTeX, Markdown export
     └── timing.py       # Timer context manager, format_duration
+
+benchmarks/
+└── bsuite/
+    ├── agents/
+    │   ├── base.py           # AlbertaAgent: bridges bsuite.Agent <-> MultiHeadMLPLearner
+    │   ├── autostep_dqn.py   # Q-learning with Autostep + ObGD (framework agent)
+    │   ├── lms_dqn.py        # Q-learning with LMS fixed step-size (framework baseline)
+    │   └── adam_dqn.py       # Q-learning with haiku/optax Adam (external baseline)
+    ├── wrappers.py           # ContinuingWrapper: episodic → continuing conversion
+    ├── configs.py            # Hyperparameter configs (standard + bottleneck variants)
+    ├── run_single.py         # Run one bsuite_id for one agent
+    ├── run_sweep.py          # Run sweep of bsuite_ids for all agents
+    └── analysis.py           # Load results, compare agents, generate plots
 ```
 
 ### Key Commands
@@ -76,6 +89,14 @@ python examples/gymnasium_reward_prediction.py
 
 # Run publication-quality experiment
 python examples/publication_experiment.py
+
+# Run bsuite benchmarks (requires bsuite extra + local bsuite clone)
+pip install -e '.[bsuite]'
+# bsuite itself: PYTHONPATH=/path/to/bsuite:$PYTHONPATH (can't pip install on Python 3.13)
+python benchmarks/bsuite/run_single.py --agent autostep --bsuite_id catch/0 --save_path output/bsuite
+python benchmarks/bsuite/run_sweep.py --save_path output/bsuite --experiments catch catch_scale
+python benchmarks/bsuite/run_sweep.py --save_path output/bsuite --continual-sequence catch/0 cartpole/0
+python benchmarks/bsuite/analysis.py --save_path output/bsuite --summary
 
 # Build documentation (requires docs)
 pip install -e ".[docs]"
@@ -620,6 +641,40 @@ Run the external normalization study to compare IDBD/Autostep with and without E
 python "examples/The Alberta Plan/Step1/external_normalization_study.py" --seeds 30 --output-dir output/
 ```
 
+## bsuite Benchmarks
+
+Bridges the framework to [bsuite](https://github.com/google-deepmind/bsuite) for standardized RL diagnostics. Code lives in `benchmarks/` (not `src/`) because the agent layer is a *consumer* of the framework, not a core primitive.
+
+### Design: Q-Learning as Multi-Head Prediction
+Uses `MultiHeadMLPLearner` with `n_heads = num_actions` as the Q-function:
+- Each head predicts Q(s, a_i)
+- NaN target masking: only the taken action's head gets updated per step
+- The shared trunk learns features — directly testing Step 2's representation learning
+
+### Continuing Mode (Alberta Plan-aligned)
+`ContinuingWrapper` converts episodic bsuite envs to continuing streams:
+- Agent never sees FIRST or LAST timesteps — runs as one continuous stream
+- `discount=0` at episode boundaries signals pseudo-termination (no bootstrap)
+- Agent state persists across environment resets
+
+### Agents
+| Agent | Config key | Description |
+|-------|-----------|-------------|
+| Autostep DQN | `autostep` | Autostep + ObGD + EMA normalization (framework's best) |
+| LMS DQN | `lms` | Fixed step-size + ObGD + EMA normalization (no-adaptation baseline) |
+| Adam DQN | `adam` | Standalone haiku/optax Adam (external baseline, no framework) |
+
+Each has `_bottleneck` variants with smaller networks `(16, 16)`.
+
+### Representation Utility Logging
+`--log-representation` flag records per-interval snapshots of:
+- Per-weight step-sizes from Autostep optimizer states
+- Trunk trace magnitudes per layer
+- Per-head step-size means
+
+### Dependencies
+bsuite itself can't be pip-installed on Python 3.13 (`imp` module removed). Use `PYTHONPATH=../bsuite:$PYTHONPATH` instead. The `[bsuite]` extra provides dm-env, optax, dm-haiku, plotnine.
+
 ## Future Work
 - Step 2 (continued): Feature generation/testing, nonlinear feature discovery
 - Step 3: GVF predictions, Horde architecture
@@ -659,6 +714,18 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.8.1 (2026-02-21)
+- **FEATURE**: bsuite benchmark integration — bridges framework to bsuite for standardized RL diagnostics
+  - `ContinuingWrapper`: converts episodic envs to continuing streams (Alberta Plan Step 6)
+  - `AlbertaAgent`: bridges bsuite `Agent` ABC to `MultiHeadMLPLearner` with Q-learning
+  - Three agent factories: Autostep+ObGD, LMS+ObGD, Adam (haiku/optax external baseline)
+  - Hyperparameter configs with standard `(64, 64)` and bottleneck `(16, 16)` variants
+  - `run_single.py` / `run_sweep.py` CLIs with `--continual-sequence` and `--use-scythe` flags
+  - Analysis module: result loading, comparison plots, representation analysis, summary tables
+  - Representation utility logging: per-weight step-sizes, trunk trace magnitudes, per-head metrics
+  - 22 tests covering wrapper, agents, factories, representation logging, and integration
+- **DEPS**: Added `[bsuite]` optional dependency group (dm-env, optax, dm-haiku, plotnine)
 
 ### v0.8.0 (2026-02-16)
 - **FEATURE**: `MultiHeadMLPLearner` — shared-trunk MLP with multiple prediction heads for multi-task continual learning

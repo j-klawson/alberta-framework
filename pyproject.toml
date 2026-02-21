@@ -52,6 +52,12 @@ docs = [
 gymnasium = [
     "gymnasium>=0.29.0",
 ]
+bsuite = [
+    "dm-env>=1.6",
+    "optax>=0.1.7",
+    "dm-haiku>=0.0.10",
+    "plotnine>=0.12",
+]
 gpu = [
     "jax[cuda12]>=0.4",
 ]
@@ -111,6 +117,35 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "jaxtyping.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "dm_env.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "bsuite.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "haiku.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "optax.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "plotnine.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "termcolor.*"
+ignore_missing_imports = true
+
+# Benchmarks use dynamic dm_env/bsuite/haiku types that mypy can't fully resolve
+[[tool.mypy.overrides]]
+module = "benchmarks.*"
+disable_error_code = ["call-arg", "arg-type", "union-attr", "attr-defined", "operator"]
 
 # chex dataclasses don't have full mypy support - disable strict checks for core modules
 [[tool.mypy.overrides]]
