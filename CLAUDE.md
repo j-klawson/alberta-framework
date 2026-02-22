@@ -24,7 +24,7 @@ This framework implements the Alberta Plan for AI Research, progressing through 
 ```
 src/alberta_framework/
 ├── core/
-│   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types
+│   ├── types.py        # TimeStep, LearnerState, optimizer states, MLP types, TD types, lifecycle utilities
 │   ├── optimizers.py   # LMS, IDBD, Autostep, ObGD, TDIDBD, AutoTDIDBD optimizers; Bounder ABC, ObGDBounding, AGCBounding
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
@@ -541,6 +541,49 @@ with Timer("My experiment"):
 - `Timer(name, verbose=True)`: Context manager for timing code blocks
 - `format_duration(seconds)`: Format seconds as human-readable (e.g., "2m 30.50s")
 
+## Agent Lifecycle Tracking
+
+All learner states (`LearnerState`, `MLPLearnerState`, `TDLearnerState`, `MultiHeadMLPState`) carry three lifecycle fields:
+
+| Field | Type | Set where | Updated where |
+|-------|------|-----------|---------------|
+| `step_count` | `jnp.int32` | `init()` → 0 | `update()` → +1 (inside scan) |
+| `birth_timestamp` | Python `float` | `init()` → `time.time()` | Never (immutable) |
+| `uptime_s` | Python `float` | `init()` → 0.0 | Learning loops, after scan completes |
+
+- `step_count` is a JAX array — safe to increment inside `jax.lax.scan`
+- `birth_timestamp` and `uptime_s` are plain Python floats — full float64, no JAX x64 issues
+- Python floats pass through `jax.lax.scan` and `jax.vmap` as static pytree leaves
+
+### Utility Functions
+```python
+from alberta_framework import agent_age_s, agent_uptime_s
+
+age = agent_age_s(state)          # time.time() - state.birth_timestamp
+uptime = agent_uptime_s(state)    # state.uptime_s (as Python float)
+```
+
+### Derived Metrics (computed by callers)
+- **Agent age**: `time.time() - state.birth_timestamp`
+- **Downtime**: `age - state.uptime_s`
+- **Duty cycle**: `state.uptime_s / age`
+- **Steps/active-second**: `state.step_count / state.uptime_s`
+
+### Example
+```python
+import time
+from alberta_framework import LinearLearner, IDBD, RandomWalkStream, run_learning_loop, agent_age_s
+import jax.random as jr
+
+learner = LinearLearner(optimizer=IDBD())
+stream = RandomWalkStream(feature_dim=10)
+state, metrics = run_learning_loop(learner, stream, num_steps=1000, key=jr.key(42))
+
+print(f"step_count: {int(state.step_count)}")      # 1000
+print(f"uptime_s: {state.uptime_s:.4f}s")           # ~0.18s
+print(f"agent_age: {agent_age_s(state):.4f}s")      # ~0.31s
+```
+
 ## Documentation
 
 Documentation is built with MkDocs and mkdocstrings (auto-generated API docs from docstrings).
@@ -714,6 +757,18 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 3. Repeat on TestPyPI with environment: `testpypi`
 
 ## Changelog
+
+### v0.9.0 (2026-02-22)
+- **FEATURE**: Agent lifecycle tracking — `step_count`, `birth_timestamp`, `uptime_s` on all learner states
+  - `LearnerState`, `MLPLearnerState`, `TDLearnerState`: new fields with backward-compatible defaults
+  - `MultiHeadMLPState`: added `birth_timestamp` and `uptime_s` (already had `step_count`)
+  - `step_count` incremented inside `update()` (JAX-traced, safe in `jax.lax.scan`)
+  - `birth_timestamp` set at `init()`, immutable across updates
+  - `uptime_s` accumulated after each `jax.lax.scan` completes in all learning loops
+  - All 7 learning loop functions stamp uptime: `run_learning_loop` (simple + tracking), `run_learning_loop_batched`, `run_mlp_learning_loop` (simple + tracking), `run_mlp_learning_loop_batched`, `run_td_learning_loop`, `run_multi_head_learning_loop`, `run_multi_head_learning_loop_batched`, `learn_from_trajectory`
+- **FEATURE**: `agent_age_s(state)` — wall-clock seconds since agent birth
+- **FEATURE**: `agent_uptime_s(state)` — cumulative active seconds inside learning loops
+- **TESTS**: 28 new lifecycle tracking tests across all learner types
 
 ### v0.8.1 (2026-02-21)
 - **FEATURE**: bsuite benchmark integration — bridges framework to bsuite for standardized RL diagnostics
