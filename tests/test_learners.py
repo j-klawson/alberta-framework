@@ -1,5 +1,7 @@
 """Tests for LinearLearner."""
 
+import time
+
 import chex
 import jax.numpy as jnp
 import jax.random as jr
@@ -17,6 +19,8 @@ from alberta_framework import (
     RandomWalkStream,
     StepSizeHistory,
     StepSizeTrackingConfig,
+    agent_age_s,
+    agent_uptime_s,
     metrics_to_dicts,
     run_learning_loop,
     run_learning_loop_batched,
@@ -784,3 +788,106 @@ class TestBatchedNormalizedLearningLoop:
 
         assert result.step_size_history is None
         assert result.normalizer_history is not None
+
+
+class TestLifecycleTracking:
+    """Tests for agent lifecycle tracking (step_count, birth_timestamp, uptime_s)."""
+
+    def test_step_count_starts_at_zero(self):
+        """step_count should be 0 after init."""
+        learner = LinearLearner()
+        state = learner.init(5)
+        assert int(state.step_count) == 0
+
+    def test_step_count_increments(self, feature_dim, sample_observation, sample_target):
+        """step_count should increment by 1 on each update."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim)
+        assert int(state.step_count) == 0
+
+        result = learner.update(state, sample_observation, sample_target)
+        assert int(result.state.step_count) == 1
+
+        result2 = learner.update(result.state, sample_observation, sample_target)
+        assert int(result2.state.step_count) == 2
+
+    def test_birth_timestamp_set(self):
+        """birth_timestamp should be set to approximately time.time() at init."""
+        before = time.time()
+        learner = LinearLearner()
+        state = learner.init(5)
+        after = time.time()
+
+        assert before <= state.birth_timestamp <= after
+
+    def test_birth_timestamp_survives_update(self, feature_dim, sample_observation, sample_target):
+        """birth_timestamp should not change across updates."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim)
+        original_ts = state.birth_timestamp
+
+        result = learner.update(state, sample_observation, sample_target)
+        assert result.state.birth_timestamp == original_ts
+
+    def test_uptime_starts_at_zero(self):
+        """uptime_s should be 0.0 after init."""
+        learner = LinearLearner()
+        state = learner.init(5)
+        assert state.uptime_s == 0.0
+
+    def test_uptime_increases_after_loop(self, rng_key):
+        """uptime_s should be > 0 after run_learning_loop."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+
+        state, _ = run_learning_loop(learner, stream, num_steps=100, key=rng_key)
+        assert state.uptime_s > 0.0
+
+    def test_uptime_accumulates(self, rng_key):
+        """uptime_s should accumulate across sequential learning loops."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+
+        key1, key2 = jr.split(rng_key)
+        state1, _ = run_learning_loop(learner, stream, num_steps=100, key=key1)
+        uptime_after_first = state1.uptime_s
+        assert uptime_after_first > 0.0
+
+        state2, _ = run_learning_loop(
+            learner, stream, num_steps=100, key=key2, learner_state=state1
+        )
+        assert state2.uptime_s > uptime_after_first
+
+    def test_step_count_after_loop(self, rng_key):
+        """step_count should equal num_steps after run_learning_loop."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+
+        state, _ = run_learning_loop(learner, stream, num_steps=200, key=rng_key)
+        assert int(state.step_count) == 200
+
+
+class TestLifecycleUtilities:
+    """Tests for agent_age_s and agent_uptime_s utility functions."""
+
+    def test_agent_age_s(self):
+        """agent_age_s should return positive age."""
+        learner = LinearLearner()
+        state = learner.init(5)
+        time.sleep(0.01)
+        age = agent_age_s(state)
+        assert age > 0.0
+
+    def test_agent_uptime_s_zero_at_init(self):
+        """agent_uptime_s should return 0.0 at init."""
+        learner = LinearLearner()
+        state = learner.init(5)
+        assert agent_uptime_s(state) == 0.0
+
+    def test_agent_uptime_s_after_loop(self, rng_key):
+        """agent_uptime_s should return > 0 after a learning loop."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = LinearLearner()
+
+        state, _ = run_learning_loop(learner, stream, num_steps=100, key=rng_key)
+        assert agent_uptime_s(state) > 0.0

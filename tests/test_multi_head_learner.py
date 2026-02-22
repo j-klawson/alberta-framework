@@ -1,5 +1,7 @@
 """Tests for the MultiHeadMLPLearner and multi-head learning loops."""
 
+import time
+
 import chex
 import jax
 import jax.numpy as jnp
@@ -835,3 +837,66 @@ class TestRunMultiHeadLearningLoopBatched:
         assert not jnp.allclose(
             result.per_head_metrics[0], result.per_head_metrics[1]
         )
+
+
+class TestMultiHeadLifecycleTracking:
+    """Tests for multi-head MLP lifecycle tracking (birth_timestamp, uptime_s)."""
+
+    def test_birth_timestamp_set(self):
+        """birth_timestamp should be set at init."""
+        before = time.time()
+        learner = MultiHeadMLPLearner(n_heads=2, hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        after = time.time()
+        assert before <= state.birth_timestamp <= after
+
+    def test_birth_timestamp_survives_update(self):
+        """birth_timestamp should not change across updates."""
+        learner = MultiHeadMLPLearner(n_heads=2, hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        original_ts = state.birth_timestamp
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, 2.0])
+        result = learner.update(state, obs, targets)
+        assert result.state.birth_timestamp == original_ts
+
+    def test_uptime_starts_at_zero(self):
+        """uptime_s should be 0.0 after init."""
+        learner = MultiHeadMLPLearner(n_heads=2, hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        assert state.uptime_s == 0.0
+
+    def test_uptime_increases_after_loop(self):
+        """uptime_s should be > 0 after run_multi_head_learning_loop."""
+        learner = MultiHeadMLPLearner(n_heads=2, hidden_sizes=(16,), sparsity=0.0)
+        key = jr.key(42)
+        k1, k2, k3 = jr.split(key, 3)
+
+        state = learner.init(feature_dim=5, key=k1)
+        observations = jr.normal(k2, (50, 5))
+        targets = jr.normal(k3, (50, 2))
+
+        result = run_multi_head_learning_loop(learner, state, observations, targets)
+        assert result.state.uptime_s > 0.0
+
+    def test_uptime_accumulates(self):
+        """uptime_s should accumulate across sequential loops."""
+        learner = MultiHeadMLPLearner(n_heads=2, hidden_sizes=(16,), sparsity=0.0)
+        key = jr.key(42)
+        k1, k2, k3, k4, k5 = jr.split(key, 5)
+
+        state = learner.init(feature_dim=5, key=k1)
+        obs1 = jr.normal(k2, (50, 5))
+        tgt1 = jr.normal(k3, (50, 2))
+
+        result1 = run_multi_head_learning_loop(learner, state, obs1, tgt1)
+        uptime_after_first = result1.state.uptime_s
+        assert uptime_after_first > 0.0
+
+        obs2 = jr.normal(k4, (50, 5))
+        tgt2 = jr.normal(k5, (50, 2))
+        result2 = run_multi_head_learning_loop(
+            learner, result1.state, obs2, tgt2
+        )
+        assert result2.state.uptime_s > uptime_after_first

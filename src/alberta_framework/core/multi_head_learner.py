@@ -16,6 +16,7 @@ Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally W
 """
 
 import math
+import time
 from typing import Any
 
 import chex
@@ -99,6 +100,8 @@ class MultiHeadMLPState:
     head_traces: tuple[Any, ...]  # tuple of (w_trace, b_trace) tuples
     normalizer_state: AnyNormalizerState | None = None
     step_count: Array = None  # type: ignore[assignment]
+    birth_timestamp: float = 0.0
+    uptime_s: float = 0.0
 
 
 @chex.dataclass(frozen=True)
@@ -325,6 +328,8 @@ class MultiHeadMLPLearner:
             head_traces=tuple(head_traces_list),
             normalizer_state=normalizer_state,
             step_count=jnp.array(0, dtype=jnp.int32),
+            birth_timestamp=time.time(),
+            uptime_s=0.0,
         )
 
     @staticmethod
@@ -631,6 +636,8 @@ class MultiHeadMLPLearner:
             head_traces=tuple(new_head_traces_list),
             normalizer_state=new_normalizer_state,
             step_count=state.step_count + 1,
+            birth_timestamp=state.birth_timestamp,
+            uptime_s=state.uptime_s,
         )
 
         per_head_metrics = jnp.stack(per_head_metrics_list)  # (n_heads, 3)
@@ -711,9 +718,12 @@ def run_multi_head_learning_loop(
         result = learner.update(l_state, obs, tgt)
         return result.state, result.per_head_metrics
 
+    t0 = time.time()
     final_state, per_head_metrics = jax.lax.scan(
         step_fn, state, (observations, targets)
     )
+    elapsed = time.time() - t0
+    final_state = final_state.replace(uptime_s=final_state.uptime_s + elapsed)  # type: ignore[attr-defined]
 
     return MultiHeadLearningResult(
         state=final_state,
@@ -753,7 +763,12 @@ def run_multi_head_learning_loop_batched(
         )
         return result.state, result.per_head_metrics
 
+    t0 = time.time()
     batched_states, batched_metrics = jax.vmap(single_run)(keys)
+    elapsed = time.time() - t0
+    batched_states = batched_states.replace(  # type: ignore[attr-defined]
+        uptime_s=batched_states.uptime_s + elapsed
+    )
 
     return BatchedMultiHeadResult(
         states=batched_states,

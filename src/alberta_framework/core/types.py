@@ -4,6 +4,8 @@ This module defines the core data types used throughout the framework,
 using chex dataclasses for JAX compatibility and jaxtyping for shape annotations.
 """
 
+import time
+
 import chex
 import jax.numpy as jnp
 from jax import Array
@@ -172,6 +174,9 @@ class LearnerState:
     bias: Float[Array, ""]
     optimizer_state: LMSState | IDBDState | AutostepState | ObGDState
     normalizer_state: AnyNormalizerState | None = None
+    step_count: Int[Array, ""] = None  # type: ignore[assignment]
+    birth_timestamp: float = 0.0
+    uptime_s: float = 0.0
 
 
 @chex.dataclass(frozen=True)
@@ -328,6 +333,9 @@ class MLPLearnerState:
     optimizer_states: tuple[LMSState | AutostepState | AutostepParamState, ...]
     traces: tuple[Array, ...]
     normalizer_state: AnyNormalizerState | None = None
+    step_count: Int[Array, ""] = None  # type: ignore[assignment]
+    birth_timestamp: float = 0.0
+    uptime_s: float = 0.0
 
 
 @chex.dataclass(frozen=True)
@@ -459,6 +467,9 @@ class TDLearnerState:
     weights: Float[Array, " feature_dim"]
     bias: Float[Array, ""]
     optimizer_state: TDOptimizerState
+    step_count: Int[Array, ""] = None  # type: ignore[assignment]
+    birth_timestamp: float = 0.0
+    uptime_s: float = 0.0
 
 
 def create_obgd_state(
@@ -580,3 +591,27 @@ def create_autotdidbd_state(
         bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
         bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
     )
+
+
+def agent_age_s(state: object) -> float:
+    """Compute agent age in seconds (wall-clock time since birth).
+
+    Args:
+        state: Any learner state with a ``birth_timestamp`` attribute
+
+    Returns:
+        Seconds elapsed since the agent was initialized
+    """
+    return time.time() - getattr(state, "birth_timestamp", 0.0)
+
+
+def agent_uptime_s(state: object) -> float:
+    """Return the agent's cumulative active uptime in seconds.
+
+    Args:
+        state: Any learner state with an ``uptime_s`` attribute
+
+    Returns:
+        Cumulative seconds the agent has spent inside learning loops
+    """
+    return float(getattr(state, "uptime_s", 0.0))

@@ -5,6 +5,7 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
+import time
 from typing import Protocol, TypeVar, cast
 
 import chex
@@ -162,6 +163,9 @@ class LinearLearner:
             bias=jnp.array(0.0, dtype=jnp.float32),
             optimizer_state=optimizer_state,
             normalizer_state=normalizer_state,
+            step_count=jnp.array(0, dtype=jnp.int32),
+            birth_timestamp=time.time(),
+            uptime_s=0.0,
         )
 
     def predict(self, state: LearnerState, observation: Observation) -> Prediction:
@@ -214,6 +218,9 @@ class LinearLearner:
                 bias=state.bias,
                 optimizer_state=state.optimizer_state,
                 normalizer_state=new_normalizer_state,
+                step_count=state.step_count,
+                birth_timestamp=state.birth_timestamp,
+                uptime_s=state.uptime_s,
             ),
             obs,
         )
@@ -237,6 +244,9 @@ class LinearLearner:
             bias=new_bias,
             optimizer_state=opt_update.new_state,
             normalizer_state=new_normalizer_state,
+            step_count=state.step_count + 1,
+            birth_timestamp=state.birth_timestamp,
+            uptime_s=state.uptime_s,
         )
 
         # Pack metrics as array for scan compatibility
@@ -351,9 +361,12 @@ def run_learning_loop[StreamStateT](
             result = learner.update(l_state, timestep.observation, timestep.target)
             return (result.state, new_s_state), result.metrics
 
+        t0 = time.time()
         (final_learner, _), metrics = jax.lax.scan(
             step_fn, (learner_state, stream_state), jnp.arange(num_steps)
         )
+        elapsed = time.time() - t0
+        final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
         return final_learner, metrics
 
@@ -558,6 +571,7 @@ def run_learning_loop[StreamStateT](
         norm_rec_indices,
     )
 
+    t0 = time.time()
     (
         (
             final_learner,
@@ -572,6 +586,8 @@ def run_learning_loop[StreamStateT](
         ),
         metrics,
     ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+    elapsed = time.time() - t0
+    final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
     # Build return values based on what was tracked
     ss_history_result = None
@@ -686,9 +702,14 @@ def run_learning_loop_batched[StreamStateT](
             return state, metrics, None, None
 
     # vmap over the keys dimension
+    t0 = time.time()
     batched_states, batched_metrics, batched_ss_history, batched_norm_history = jax.vmap(
         single_seed_run
     )(keys)
+    elapsed = time.time() - t0
+    batched_states = batched_states.replace(  # type: ignore[attr-defined]
+        uptime_s=batched_states.uptime_s + elapsed
+    )
 
     # Reconstruct batched histories if tracking was enabled
     if step_size_tracking is not None and batched_ss_history is not None:
@@ -881,6 +902,9 @@ class MLPLearner:
             optimizer_states=tuple(opt_states_list),
             traces=tuple(traces_list),
             normalizer_state=normalizer_state,
+            step_count=jnp.array(0, dtype=jnp.int32),
+            birth_timestamp=time.time(),
+            uptime_s=0.0,
         )
 
     @staticmethod
@@ -1046,6 +1070,9 @@ class MLPLearner:
             optimizer_states=tuple(new_opt_states),
             traces=tuple(new_traces),
             normalizer_state=new_normalizer_state,
+            step_count=state.step_count + 1,
+            birth_timestamp=state.birth_timestamp,
+            uptime_s=state.uptime_s,
         )
 
         squared_error = error**2
@@ -1135,9 +1162,12 @@ def run_mlp_learning_loop[StreamStateT](
             result = learner.update(l_state, timestep.observation, timestep.target)
             return (result.state, new_s_state), result.metrics
 
+        t0 = time.time()
         (final_learner, _), metrics = jax.lax.scan(
             step_fn, (learner_state, stream_state), jnp.arange(num_steps)
         )
+        elapsed = time.time() - t0
+        final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
         return final_learner, metrics
 
@@ -1205,10 +1235,13 @@ def run_mlp_learning_loop[StreamStateT](
         norm_rec_indices,
     )
 
+    t0 = time.time()
     (
         (final_learner, _, final_n_means, final_n_vars, final_n_rec),
         metrics,
     ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+    elapsed = time.time() - t0
+    final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
     norm_history = NormalizerHistory(
         means=final_n_means,
@@ -1282,7 +1315,12 @@ def run_mlp_learning_loop_batched[StreamStateT](
             state, metrics = cast(tuple[MLPLearnerState, Array], result)
             return state, metrics, None
 
+    t0 = time.time()
     batched_states, batched_metrics, batched_norm_history = jax.vmap(single_seed_run)(keys)
+    elapsed = time.time() - t0
+    batched_states = batched_states.replace(  # type: ignore[attr-defined]
+        uptime_s=batched_states.uptime_s + elapsed
+    )
 
     if normalizer_tracking is not None and batched_norm_history is not None:
         batched_normalizer_history = NormalizerHistory(
@@ -1363,6 +1401,9 @@ class TDLinearLearner:
             weights=jnp.zeros(feature_dim, dtype=jnp.float32),
             bias=jnp.array(0.0, dtype=jnp.float32),
             optimizer_state=optimizer_state,
+            step_count=jnp.array(0, dtype=jnp.int32),
+            birth_timestamp=time.time(),
+            uptime_s=0.0,
         )
 
     def predict(self, state: TDLearnerState, observation: Observation) -> Prediction:
@@ -1432,6 +1473,9 @@ class TDLinearLearner:
             weights=new_weights,
             bias=new_bias,
             optimizer_state=opt_update.new_state,
+            step_count=state.step_count + 1,
+            birth_timestamp=state.birth_timestamp,
+            uptime_s=state.uptime_s,
         )
 
         # Pack metrics as array for scan compatibility
@@ -1511,8 +1555,11 @@ def run_td_learning_loop[StreamStateT](
         )
         return (result.state, new_s_state), result.metrics
 
+    t0 = time.time()
     (final_learner, _), metrics = jax.lax.scan(
         step_fn, (learner_state, stream_state), jnp.arange(num_steps)
     )
+    elapsed = time.time() - t0
+    final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
     return final_learner, metrics

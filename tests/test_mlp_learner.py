@@ -1,5 +1,7 @@
 """Tests for the MLPLearner and run_mlp_learning_loop."""
 
+import time
+
 import chex
 import jax.numpy as jnp
 import jax.random as jr
@@ -733,3 +735,62 @@ class TestLayerNormToggle:
         assert isinstance(result, BatchedMLPResult)
         chex.assert_shape(result.metrics, (num_seeds, num_steps, 3))
         chex.assert_tree_all_finite(result.metrics)
+
+
+class TestMLPLifecycleTracking:
+    """Tests for MLP agent lifecycle tracking."""
+
+    def test_step_count_starts_at_zero(self):
+        """step_count should be 0 after init."""
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        assert int(state.step_count) == 0
+
+    def test_step_count_increments(self):
+        """step_count should increment on update."""
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        target = jnp.array([1.0])
+        result = learner.update(state, obs, target)
+        assert int(result.state.step_count) == 1
+
+    def test_birth_timestamp_set(self):
+        """birth_timestamp should be set at init."""
+        before = time.time()
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        after = time.time()
+        assert before <= state.birth_timestamp <= after
+
+    def test_birth_timestamp_survives_update(self):
+        """birth_timestamp should not change across updates."""
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+        state = learner.init(feature_dim=5, key=jr.key(42))
+        original_ts = state.birth_timestamp
+
+        obs = jnp.ones(5)
+        target = jnp.array([1.0])
+        result = learner.update(state, obs, target)
+        assert result.state.birth_timestamp == original_ts
+
+    def test_uptime_increases_after_loop(self):
+        """uptime_s should be > 0 after run_mlp_learning_loop."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+
+        state, _ = run_mlp_learning_loop(
+            learner, stream, num_steps=50, key=jr.key(42)
+        )
+        assert state.uptime_s > 0.0
+
+    def test_step_count_after_loop(self):
+        """step_count should equal num_steps after learning loop."""
+        stream = RandomWalkStream(feature_dim=5)
+        learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0)
+
+        state, _ = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+        assert int(state.step_count) == 100

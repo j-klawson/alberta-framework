@@ -1,5 +1,7 @@
 """Tests for TDLinearLearner and run_td_learning_loop."""
 
+import time
+
 import chex
 import jax.numpy as jnp
 import jax.random as jr
@@ -8,7 +10,6 @@ import pytest
 from alberta_framework import (
     TDIDBD,
     AutoTDIDBD,
-    TDLearnerState,
     TDLinearLearner,
     TDTimeStep,
     run_td_learning_loop,
@@ -147,10 +148,9 @@ class TestTDLinearLearner:
 
         # Set non-zero weights for meaningful test
         weights = jnp.ones(feature_dim, dtype=jnp.float32) * 0.1
-        state = TDLearnerState(
+        state = state.replace(
             weights=weights,
             bias=jnp.array(0.5, dtype=jnp.float32),
-            optimizer_state=state.optimizer_state,
         )
 
         next_obs = sample_observation * 0.5
@@ -429,3 +429,64 @@ class TestTDLearnerWithDifferentOptimizers:
 
         # h_traces should differ between the two methods
         # (they evolve differently based on semi vs ordinary gradient)
+
+
+class TestTDLifecycleTracking:
+    """Tests for TD learner lifecycle tracking."""
+
+    def test_step_count_starts_at_zero(self):
+        """step_count should be 0 after init."""
+        learner = TDLinearLearner()
+        state = learner.init(5)
+        assert int(state.step_count) == 0
+
+    def test_step_count_increments(self):
+        """step_count should increment on update."""
+        learner = TDLinearLearner()
+        state = learner.init(5)
+
+        obs = jnp.ones(5)
+        next_obs = jnp.zeros(5)
+        reward = jnp.array(1.0)
+        gamma = jnp.array(0.99)
+
+        result = learner.update(state, obs, reward, next_obs, gamma)
+        assert int(result.state.step_count) == 1
+
+    def test_birth_timestamp_set(self):
+        """birth_timestamp should be set at init."""
+        before = time.time()
+        learner = TDLinearLearner()
+        state = learner.init(5)
+        after = time.time()
+        assert before <= state.birth_timestamp <= after
+
+    def test_birth_timestamp_survives_update(self):
+        """birth_timestamp should not change across updates."""
+        learner = TDLinearLearner()
+        state = learner.init(5)
+        original_ts = state.birth_timestamp
+
+        obs = jnp.ones(5)
+        next_obs = jnp.zeros(5)
+        reward = jnp.array(1.0)
+        gamma = jnp.array(0.99)
+
+        result = learner.update(state, obs, reward, next_obs, gamma)
+        assert result.state.birth_timestamp == original_ts
+
+    def test_uptime_increases_after_loop(self, rng_key):
+        """uptime_s should be > 0 after run_td_learning_loop."""
+        stream = SimpleTDStream(feature_dim=5)
+        learner = TDLinearLearner()
+
+        state, _ = run_td_learning_loop(learner, stream, num_steps=100, key=rng_key)
+        assert state.uptime_s > 0.0
+
+    def test_step_count_after_loop(self, rng_key):
+        """step_count should equal num_steps after learning loop."""
+        stream = SimpleTDStream(feature_dim=5)
+        learner = TDLinearLearner()
+
+        state, _ = run_td_learning_loop(learner, stream, num_steps=200, key=rng_key)
+        assert int(state.step_count) == 200

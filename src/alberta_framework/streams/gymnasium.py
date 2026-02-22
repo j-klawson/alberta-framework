@@ -15,6 +15,7 @@ Supports multiple prediction modes:
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -282,7 +283,10 @@ def learn_from_trajectory(
         result = learner.update(state, obs, target)
         return result.state, result.metrics
 
+    t0 = time.time()
     final_state, metrics = jax.lax.scan(step_fn, learner_state, (observations, targets))
+    elapsed = time.time() - t0
+    final_state = final_state.replace(uptime_s=final_state.uptime_s + elapsed)  # type: ignore[attr-defined]
 
     return final_state, metrics
 
