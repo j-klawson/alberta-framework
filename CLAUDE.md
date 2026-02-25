@@ -718,11 +718,11 @@ Each has `_bottleneck` variants with smaller networks `(16, 16)`.
 ### Dependencies
 bsuite itself can't be pip-installed on Python 3.13 (`imp` module removed). Use `PYTHONPATH=../bsuite:$PYTHONPATH` instead. The `[bsuite]` extra provides dm-env, optax, dm-haiku, plotnine.
 
-## Future Work
-- Step 2 (continued): Feature generation/testing, nonlinear feature discovery
-- Step 3: GVF predictions, Horde architecture
-- Step 4: Actor-critic control with ObGD; add AdaptiveObGD (Appendix B of Elsayed et al. 2024) with RMSProp-style second-moment normalization
-- Steps 5-6: Average reward formulation
+## Roadmap & TODO
+
+- **ROADMAP.md**: Alberta Plan 12-step progression, completed/in-progress/planned steps, and long-term vision
+- **TODO.md**: Immediate next steps and near-term work items
+- **CHANGELOG.md**: Full version history in Keep a Changelog format
 
 ## Version Management and CI/CD
 
@@ -758,133 +758,4 @@ The publish workflow uses OpenID Connect (no API tokens). Configure on PyPI:
 
 ## Changelog
 
-### v0.9.0 (2026-02-22)
-- **FEATURE**: Agent lifecycle tracking — `step_count`, `birth_timestamp`, `uptime_s` on all learner states
-  - `LearnerState`, `MLPLearnerState`, `TDLearnerState`: new fields with backward-compatible defaults
-  - `MultiHeadMLPState`: added `birth_timestamp` and `uptime_s` (already had `step_count`)
-  - `step_count` incremented inside `update()` (JAX-traced, safe in `jax.lax.scan`)
-  - `birth_timestamp` set at `init()`, immutable across updates
-  - `uptime_s` accumulated after each `jax.lax.scan` completes in all learning loops
-  - All 7 learning loop functions stamp uptime: `run_learning_loop` (simple + tracking), `run_learning_loop_batched`, `run_mlp_learning_loop` (simple + tracking), `run_mlp_learning_loop_batched`, `run_td_learning_loop`, `run_multi_head_learning_loop`, `run_multi_head_learning_loop_batched`, `learn_from_trajectory`
-- **FEATURE**: `agent_age_s(state)` — wall-clock seconds since agent birth
-- **FEATURE**: `agent_uptime_s(state)` — cumulative active seconds inside learning loops
-- **TESTS**: 28 new lifecycle tracking tests across all learner types
-
-### v0.8.1 (2026-02-21)
-- **FEATURE**: bsuite benchmark integration — bridges framework to bsuite for standardized RL diagnostics
-  - `ContinuingWrapper`: converts episodic envs to continuing streams (Alberta Plan Step 6)
-  - `AlbertaAgent`: bridges bsuite `Agent` ABC to `MultiHeadMLPLearner` with Q-learning
-  - Three agent factories: Autostep+ObGD, LMS+ObGD, Adam (haiku/optax external baseline)
-  - Hyperparameter configs with standard `(64, 64)` and bottleneck `(16, 16)` variants
-  - `run_single.py` / `run_sweep.py` CLIs with `--continual-sequence` and `--use-scythe` flags
-  - Analysis module: result loading, comparison plots, representation analysis, summary tables
-  - Representation utility logging: per-weight step-sizes, trunk trace magnitudes, per-head metrics
-  - 22 tests covering wrapper, agents, factories, representation logging, and integration
-- **DEPS**: Added `[bsuite]` optional dependency group (dm-env, optax, dm-haiku, plotnine)
-
-### v0.8.0 (2026-02-16)
-- **FEATURE**: `MultiHeadMLPLearner` — shared-trunk MLP with multiple prediction heads for multi-task continual learning
-  - VJP-based gradient computation with accumulated cotangents (single backward pass through trunk)
-  - NaN target masking for selective head activation (inactive heads skip gradient updates)
-  - Composable: accepts any `Optimizer`, optional `Bounder`, optional `Normalizer`
-  - Eligibility traces managed per-head and per-trunk-layer
-- **FEATURE**: `MultiHeadMLPState`, `MultiHeadMLPUpdateResult`, `MultiHeadLearningResult`, `BatchedMultiHeadResult` types
-- **FEATURE**: `run_multi_head_learning_loop()` — `jax.lax.scan` over observation/target arrays with NaN masking
-- **FEATURE**: `run_multi_head_learning_loop_batched()` — `jax.vmap` over initialization keys for multi-seed parallelization
-- **FEATURE**: `multi_head_metrics_to_dicts()` — convert array metrics to per-head dicts for online use
-
-### v0.7.3 (2026-02-09)
-- **FEATURE**: `MLPLearner(use_layer_norm=False)` — toggle parameterless LayerNorm for ablation studies (default `True`, backwards-compatible)
-
-### v0.7.2 (2026-02-08)
-- **FIX**: IDBD operation ordering now matches Sutton 1992 Figure 2: meta-update first, then NEW alpha for weight and trace updates
-- **BREAKING**: Autostep rewritten to match Mahmood et al. 2012 Table 1 exactly:
-  - `v_i` now tracks meta-gradient magnitude `|δ*x*h|` (was primary gradient `|δ*x|`)
-  - `v_i` uses self-regulated EMA (Eq. 4), not `max(|grad|, v*τ)`
-  - Overshoot prevention via `M = max(Σ α_i*x_i², 1)` (Eq. 6-7)
-  - Trace decay includes `x²`: `h_i = h_i*(1 - α_i*x_i²) + α_i*δ*x_i`
-  - Normalizers and traces initialized to 0 (was 1 and 0)
-  - Normalization only applies to meta-update, not to weight/trace updates
-- **BREAKING**: `Autostep(normalizer_decay=...)` renamed to `Autostep(tau=...)`, default changed from 0.99 to 10000.0
-- **BREAKING**: `AutostepState.normalizer_decay` renamed to `AutostepState.tau`
-- **BREAKING**: `AutostepParamState.normalizer_decay` renamed to `AutostepParamState.tau`
-- **FEATURE**: `Autostep.update_from_gradient()` now accepts optional `error` parameter for full paper algorithm in MLP path
-- **FEATURE**: `Optimizer.update_from_gradient()` base signature accepts optional `error` parameter
-- **DOCS**: Updated CLAUDE.md algorithm descriptions for IDBD and Autostep
-
-### v0.7.1 (2026-02-07)
-- **FEATURE**: `AGCBounding` — Adaptive Gradient Clipping (Brock et al. 2021) as a `Bounder` ABC, per-unit clipping scaled by weight norm
-- **FEATURE**: `_unitwise_norm()` helper for unit-wise L2 norm computation (1D: abs, 2D+: norm over fan-in axes)
-- **DOCS**: Updated README with AGCBounding docs, example usage, and Brock et al. 2021 citation
-- **DOCS**: Updated CLAUDE.md with AGC algorithm description and changelog
-
-### v0.7.0 (2026-02-07)
-- **BREAKING**: Removed `NormalizedLinearLearner`, `NormalizedMLPLearner` — use `LinearLearner(normalizer=...)` and `MLPLearner(normalizer=...)` instead
-- **BREAKING**: Removed `run_normalized_learning_loop`, `run_normalized_learning_loop_batched`, `run_mlp_normalized_learning_loop`, `run_mlp_normalized_learning_loop_batched` — unified into `run_learning_loop` and `run_mlp_learning_loop` (detect normalization from learner)
-- **BREAKING**: Removed `NormalizedLearnerState`, `NormalizedMLPLearnerState`, `NormalizedMLPUpdateResult`, `BatchedNormalizedResult`, `BatchedMLPNormalizedResult`, `MLPObGDState` types
-- **BREAKING**: `MLPLearner` no longer accepts `kappa` parameter — use `bounder=ObGDBounding(kappa=2.0)` instead
-- **FEATURE**: `Bounder` ABC and `ObGDBounding` for decoupled update bounding (composable with any optimizer)
-- **FEATURE**: `AutostepParamState` for per-parameter Autostep optimization (arbitrary array shapes)
-- **FEATURE**: `Optimizer.init_for_shape()` and `Optimizer.update_from_gradient()` for shape-agnostic optimization (LMS, Autostep)
-- **FEATURE**: `MLPLearner` now accepts composable `optimizer`, `bounder`, and `normalizer` parameters
-- **FEATURE**: `LinearLearner` now accepts optional `bounder` and `normalizer` parameters
-- **FEATURE**: Unified learning loops: 4 functions instead of 8 (linear + MLP, each with single + batched)
-- **FIX**: mypy override errors — base class `init_for_shape`/`update_from_gradient` use `Any` since return type varies by subclass
-- **DOCS**: Updated README with composable architecture, MLP Learner, Bounders, Normalizers, stability disclaimer, and Elsayed et al. 2024 reference
-- **DOCS**: Updated CLAUDE.md with v0.7.0 API changes throughout
-
-### v0.6.1 (2026-02-07)
-- Version bump only
-
-### v0.6.0 (2026-02-07)
-- **BREAKING**: Replaced `OnlineNormalizer`, `NormalizerState`, `create_normalizer_state` with `Normalizer` ABC hierarchy
-- **FEATURE**: `Normalizer` ABC with generic `StateT` constraint, following the `Optimizer[StateT]` pattern
-- **FEATURE**: `EMANormalizer` — exponential moving average normalization (renamed from `OnlineNormalizer`, corrected docstrings)
-- **FEATURE**: `WelfordNormalizer` — true Welford's algorithm with Bessel's correction for stationary distributions
-- **FEATURE**: `EMANormalizerState`, `WelfordNormalizerState`, `AnyNormalizerState` types
-- **FEATURE**: `NormalizedLinearLearner` now accepts any `Normalizer` subclass
-- **FEATURE**: `NormalizedMLPLearner` — wraps `MLPLearner` with online normalization (EMA or Welford)
-- **FEATURE**: `NormalizedMLPLearnerState`, `NormalizedMLPUpdateResult`, `BatchedMLPNormalizedResult` types
-- **FEATURE**: `run_mlp_normalized_learning_loop()` with optional `NormalizerTrackingConfig`
-- **FEATURE**: `run_mlp_normalized_learning_loop_batched()` for vmap-based multi-seed normalized MLP training
-
-### v0.5.3 (2026-02-06)
-- **FEATURE**: `run_mlp_learning_loop_batched()` for vmap-based multi-seed MLP training with `BatchedMLPResult` return type
-
-### v0.5.2 (2026-02-06)
-- **FIX**: Resolved mypy type error in `MLPLearner` z_sum computation — replaced `sum()` over JAX arrays with explicit `jnp.array(0.0)` accumulator
-- **DOCS**: Added Project Architecture, Python Environment, Git Workflow, Testing & Linting, and Documentation Updates sections to CLAUDE.md
-
-### v0.5.0 (2026-02-06)
-- **FEATURE**: ObGD (Observation-bounded Gradient Descent) optimizer with dynamic step-size bounding (Elsayed et al. 2024)
-- **FEATURE**: `MLPLearner` with parameterless LayerNorm, LeakyReLU, and sparse initialization
-- **FEATURE**: `sparse_init()` for LeCun-scale initialization with per-neuron sparsity
-- **FEATURE**: `run_mlp_learning_loop()` for JIT-compiled MLP training via `jax.lax.scan`
-- **FEATURE**: MLP types: `MLPParams`, `MLPObGDState`, `MLPLearnerState`, `MLPUpdateResult`
-- **FEATURE**: ObGD types: `ObGDState`, `create_obgd_state()`
-- **FEATURE**: Step 2 example: `linear_vs_mlp_comparison.py`
-
-### v0.4.0 (2026-02-04)
-- **FEATURE**: Implemented TD-IDBD optimizer for temporal-difference learning with per-weight adaptive step-sizes and eligibility traces (Kearney et al., 2019)
-- **FEATURE**: Implemented AutoTDIDBD optimizer with AutoStep-style normalization for improved stability
-- **FEATURE**: Added `TDLinearLearner` class for linear value function approximation in TD learning
-- **FEATURE**: Added `run_td_learning_loop()` for JIT-compiled TD learning via `jax.lax.scan`
-- **FEATURE**: Added TD state types: `TDIDBDState`, `AutoTDIDBDState`, `TDLearnerState`, `TDTimeStep`
-- **FEATURE**: Added `TDStream` protocol for TD experience streams
-- **DOCS**: Updated README with TD learning documentation and Kearney et al. 2019 reference
-
-### v0.3.2 (2026-02-03)
-- **FIX**: Relaxed test tolerance in batched vs sequential comparison tests (`rtol=1e-5`) to account for floating-point differences between vmap and sequential execution paths
-- **FIX**: Added `ignore = ["F722"]` to ruff config for jaxtyping shape annotation syntax that ruff doesn't understand
-- **FIX**: Removed unused `PRNGKeyArray` import from `core/types.py`
-
-### v0.3.0 (2026-02-03)
-- **FEATURE**: Migrated all state types from NamedTuple to `@chex.dataclass(frozen=True)` for DeepMind-style JAX compatibility
-- **FEATURE**: Added jaxtyping shape annotations for compile-time type safety (`Float[Array, " feature_dim"]`, `PRNGKeyArray`, etc.)
-- **FEATURE**: Updated test suite to use chex assertions (`chex.assert_shape`, `chex.assert_tree_all_finite`, `chex.assert_trees_all_close`)
-- **DEPS**: Added `chex>=0.1.86` and `jaxtyping>=0.2.28` as required dependencies
-- **DEPS**: Added `beartype>=0.18.0` as optional dev dependency for runtime type checking
-
-### v0.2.2 (2026-02-02)
-- Fixed mypy type errors in `run_learning_loop_batched` and `run_normalized_learning_loop_batched` functions
-- Added `typing.cast` to properly handle conditional return type unpacking in batched learning loops
+See [CHANGELOG.md](CHANGELOG.md) for full version history (v0.1.0 through v0.9.0).

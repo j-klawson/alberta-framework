@@ -11,26 +11,34 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 **Delivered**:
 - LMS, IDBD (Sutton 1992), Autostep (Mahmood et al. 2012) optimizers
 - Linear learners with pluggable optimizers
-- Online feature normalization
+- Online feature normalization (EMA and Welford)
 - JIT-compiled scan-based learning loops with `jax.lax.scan`
 - Batched multi-seed experiments via `jax.vmap`
 - Step-size and normalizer tracking for meta-adaptation analysis
 - TD-IDBD and AutoTDIDBD for temporal-difference learning (Kearney et al. 2019)
 - Publication-quality experiment infrastructure (statistics, visualization, export)
+- Factorial studies with multiple non-stationarity types and scale ranges
 
-## Step 2: Nonlinear Function Approximation — In Progress (v0.5.0)
+## Step 2: Nonlinear Function Approximation — In Progress (v0.5.0–v0.9.0)
 
 **Goal**: Extend from linear to nonlinear function approximation while maintaining streaming, single-step updates. Demonstrate that ObGD's overshooting prevention enables stable MLP learning in the continual setting.
 
-**Delivered (v0.5.0)**:
-- ObGD optimizer (Elsayed et al. 2024) with dynamic step-size bounding
-- MLPLearner with parameterless LayerNorm, LeakyReLU, sparse initialization
-- `run_mlp_learning_loop` for JIT-compiled MLP training
+**Delivered**:
+- ObGD bounding (Elsayed et al. 2024) with dynamic step-size bounding, decoupled as `Bounder` ABC
+- AGC bounding (Brock et al. 2021) for per-unit adaptive gradient clipping
+- `MLPLearner` with parameterless LayerNorm, LeakyReLU, sparse initialization
+- Composable architecture: any Optimizer + optional Bounder + optional Normalizer
+- `MultiHeadMLPLearner` for multi-task continual learning (shared trunk, NaN masking)
+- bsuite benchmark integration with Q-learning agents (Autostep DQN, LMS DQN, Adam DQN)
+- `ContinuingWrapper` for episodic-to-continuing conversion (Alberta Plan Step 6 preview)
+- Agent lifecycle tracking (`step_count`, `birth_timestamp`, `uptime_s`)
+- Representation utility logging for bsuite experiments
 
 **Planned**:
 - Feature generation and testing ("generate and test" mechanisms)
 - Nonlinear feature discovery for streaming problems
 - Comparison studies across diverse non-stationarity types
+- AdaptiveObGD (Appendix B of Elsayed et al. 2024) with RMSProp-style second-moment normalization
 
 ## Step 3: Prediction — Planned
 
@@ -78,3 +86,4 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Kearney, A., Veeriah, V., Travnik, J., Pilarski, P.M., & Sutton, R.S. (2019). "Learning Feature Relevance Through Step Size Adaptation in Temporal-Difference Learning"
 - Sutton, R.S., et al. (2022). "The Alberta Plan for AI Research"
 - Elsayed, M., Lan, Q., Lyle, C., & Mahmood, A.R. (2024). "Streaming Deep Reinforcement Learning Finally Works"
+- Brock, A., De, S., Smith, S.L., & Simonyan, K. (2021). "High-Performance Large-Scale Image Recognition Without Normalization"
