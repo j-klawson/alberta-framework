@@ -260,7 +260,8 @@ If you use this framework in your research, please cite:
   title = {Alberta Framework: A JAX Implementation of Alberta Plan components},
   author = {Lawson, Keith},
   year = {2026},
-  url = {https://github.com/j-klawson/alberta-framework}
+  url = {https://github.com/j-klawson/alberta-framework},
+  doi = {10.5281/zenodo.18814470}
 }
 ```
 
