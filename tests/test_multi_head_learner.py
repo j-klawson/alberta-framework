@@ -900,3 +900,105 @@ class TestMultiHeadLifecycleTracking:
             learner, result1.state, obs2, tgt2
         )
         assert result2.state.uptime_s > uptime_after_first
+
+
+# =============================================================================
+# Hybrid optimizer tests
+# =============================================================================
+
+
+class TestMultiHeadHybridOptimizer:
+    """Tests for MultiHeadMLPLearner with head_optimizer."""
+
+    def test_hybrid_init_creates_different_states(self):
+        """Head optimizer states should differ from trunk when using hybrid."""
+        from alberta_framework.core.types import AutostepParamState, LMSState
+
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        # Trunk optimizer states should be LMS
+        for trunk_opt in state.trunk_optimizer_states:
+            assert isinstance(trunk_opt, LMSState)
+
+        # Head optimizer states should be Autostep
+        for w_opt, b_opt in state.head_optimizer_states:
+            assert isinstance(w_opt, AutostepParamState)
+            assert isinstance(b_opt, AutostepParamState)
+
+    def test_hybrid_update_runs(self):
+        """Update with hybrid optimizer should work."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, 2.0])
+
+        result = learner.update(state, obs, targets)
+        assert isinstance(result, MultiHeadMLPUpdateResult)
+        chex.assert_tree_all_finite(result.predictions)
+        chex.assert_tree_all_finite(result.per_head_metrics)
+
+    def test_hybrid_scan_loop(self):
+        """Full scan loop with hybrid optimizer should work."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        key = jr.key(42)
+        k1, k2, k3 = jr.split(key, 3)
+        state = learner.init(feature_dim=5, key=k1)
+        observations = jr.normal(k2, (50, 5))
+        targets = jr.normal(k3, (50, 2))
+
+        result = run_multi_head_learning_loop(
+            learner, state, observations, targets
+        )
+
+        assert isinstance(result, MultiHeadLearningResult)
+        chex.assert_shape(result.per_head_metrics, (50, 2, 3))
+
+    def test_hybrid_default_none_matches_uniform(self):
+        """head_optimizer=None should produce same results as explicit single optimizer."""
+        key = jr.key(42)
+        k1, k2, k3 = jr.split(key, 3)
+        observations = jr.normal(k2, (30, 5))
+        targets = jr.normal(k3, (30, 2))
+
+        learner_default = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0, bounder=ObGDBounding(kappa=2.0),
+        )
+        learner_explicit = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0, head_optimizer=None,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        state_default = learner_default.init(feature_dim=5, key=k1)
+        state_explicit = learner_explicit.init(feature_dim=5, key=k1)
+
+        result_default = run_multi_head_learning_loop(
+            learner_default, state_default, observations, targets
+        )
+        result_explicit = run_multi_head_learning_loop(
+            learner_explicit, state_explicit, observations, targets
+        )
+
+        chex.assert_trees_all_close(
+            result_default.per_head_metrics,
+            result_explicit.per_head_metrics,
+        )

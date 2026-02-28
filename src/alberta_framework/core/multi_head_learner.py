@@ -212,6 +212,7 @@ class MultiHeadMLPLearner:
         sparsity: float = 0.9,
         leaky_relu_slope: float = 0.01,
         use_layer_norm: bool = True,
+        head_optimizer: AnyOptimizer | None = None,
     ):
         """Initialize the multi-head MLP learner.
 
@@ -229,10 +230,16 @@ class MultiHeadMLPLearner:
             leaky_relu_slope: Negative slope for LeakyReLU (default: 0.01)
             use_layer_norm: Whether to apply parameterless layer normalization
                 (default: True)
+            head_optimizer: Optional separate optimizer for the output heads.
+                When None (default), all layers use ``optimizer``. When set,
+                trunk (hidden) layers use ``optimizer`` while each head uses
+                ``head_optimizer``. This enables hybrid configurations like
+                stable LMS for the trunk with adaptive Autostep for the heads.
         """
         self._n_heads = n_heads
         self._hidden_sizes = hidden_sizes
         self._optimizer: AnyOptimizer = optimizer or LMS(step_size=step_size)
+        self._head_optimizer: AnyOptimizer | None = head_optimizer
         self._bounder = bounder
         self._gamma = gamma
         self._lamda = lamda
@@ -298,6 +305,7 @@ class MultiHeadMLPLearner:
         head_traces_list: list[tuple[Array, Array]] = []
         head_opt_states_list: list[tuple[Any, ...]] = []
 
+        head_opt = self._head_optimizer if self._head_optimizer is not None else self._optimizer
         for _ in range(self._n_heads):
             key, subkey = jax.random.split(key)
             w = sparse_init(subkey, (1, h_last), sparsity=self._sparsity)
@@ -306,8 +314,8 @@ class MultiHeadMLPLearner:
             head_biases.append(b)
             head_traces_list.append((jnp.zeros_like(w), jnp.zeros_like(b)))
             head_opt_states_list.append((
-                self._optimizer.init_for_shape(w.shape),
-                self._optimizer.init_for_shape(b.shape),
+                head_opt.init_for_shape(w.shape),
+                head_opt.init_for_shape(b.shape),
             ))
 
         head_params = MLPParams(
@@ -572,10 +580,11 @@ class MultiHeadMLPLearner:
             )
 
             # Optimizer step (with error for meta-learning)
-            w_step, new_w_opt = self._optimizer.update_from_gradient(
+            head_opt = self._head_optimizer if self._head_optimizer is not None else self._optimizer
+            w_step, new_w_opt = head_opt.update_from_gradient(
                 old_w_opt, new_w_trace, error=error_i
             )
-            b_step, new_b_opt = self._optimizer.update_from_gradient(
+            b_step, new_b_opt = head_opt.update_from_gradient(
                 old_b_opt, new_b_trace, error=error_i
             )
 

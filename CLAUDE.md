@@ -241,6 +241,7 @@ When `use_layer_norm=False`: `Input -> [Dense(H) -> LeakyReLU] x N -> Dense(1)`
 - Parameterless layer normalization (no learned scale/shift), toggleable via `use_layer_norm`
 - Sparse initialization (90% default)
 - Composable: accepts any `Optimizer`, optional `Bounder`, optional `Normalizer`
+- **Hybrid optimizer**: optional `head_optimizer` uses a separate optimizer for the output layer
 - Gradient computation via `jax.grad` on pure forward function
 - Eligibility traces managed by learner (`gamma`, `lamda` parameters)
 
@@ -265,6 +266,16 @@ learner = MLPLearner(
     normalizer=EMANormalizer(decay=0.99),
 )
 
+# Hybrid optimizer: LMS trunk + Autostep head
+# Stable LMS for non-convex hidden layers, adaptive Autostep for linear output
+learner = MLPLearner(
+    hidden_sizes=(128, 128),
+    step_size=1.0,
+    head_optimizer=Autostep(initial_step_size=0.01),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+
 # With normalizer tracking
 config = NormalizerTrackingConfig(interval=100)
 state, metrics, norm_history = run_mlp_learning_loop(
@@ -285,7 +296,8 @@ Architecture: `Input -> [Dense(H) -> LayerNorm -> LeakyReLU] x N -> {Head_i: Den
 - Shared hidden trunk with independent per-head output layers
 - VJP with accumulated cotangents: one backward pass through trunk regardless of n_heads
 - NaN targets mark inactive heads (params/traces/optimizer states preserved)
-- Same composability as MLPLearner (Optimizer, Bounder, Normalizer)
+- Same composability as MLPLearner (Optimizer, Bounder, Normalizer, head_optimizer)
+- **Hybrid optimizer**: optional `head_optimizer` uses a separate optimizer for all heads (trunk uses `optimizer`)
 - Learning loops take pre-provided observations/targets arrays (no ScanStream)
 
 ```python

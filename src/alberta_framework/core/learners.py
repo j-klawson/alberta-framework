@@ -817,6 +817,7 @@ class MLPLearner:
         sparsity: float = 0.9,
         leaky_relu_slope: float = 0.01,
         use_layer_norm: bool = True,
+        head_optimizer: AnyOptimizer | None = None,
     ):
         """Initialize MLP learner.
 
@@ -837,9 +838,15 @@ class MLPLearner:
             use_layer_norm: Whether to apply parameterless layer normalization
                 between hidden layers (default: True). Set to False for ablation
                 studies.
+            head_optimizer: Optional separate optimizer for the output (head) layer.
+                When None (default), all layers use ``optimizer``. When set, hidden
+                layers use ``optimizer`` while the output layer uses
+                ``head_optimizer``. This enables hybrid configurations like
+                stable LMS for the trunk with adaptive Autostep for the head.
         """
         self._hidden_sizes = hidden_sizes
         self._optimizer: AnyOptimizer = optimizer or LMS(step_size=step_size)
+        self._head_optimizer: AnyOptimizer | None = head_optimizer
         self._bounder = bounder
         self._gamma = gamma
         self._lamda = lamda
@@ -873,7 +880,8 @@ class MLPLearner:
         traces_list = []
         opt_states_list = []
 
-        for i in range(len(layer_sizes) - 1):
+        n_total_layers = len(layer_sizes) - 1
+        for i in range(n_total_layers):
             fan_out = layer_sizes[i + 1]
             fan_in = layer_sizes[i]
             key, subkey = jax.random.split(key)
@@ -884,9 +892,15 @@ class MLPLearner:
             # Traces for weights and biases (interleaved: w0, b0, w1, b1, ...)
             traces_list.append(jnp.zeros_like(w))
             traces_list.append(jnp.zeros_like(b))
-            # Optimizer states for weights and biases
-            opt_states_list.append(self._optimizer.init_for_shape(w.shape))
-            opt_states_list.append(self._optimizer.init_for_shape(b.shape))
+            # Optimizer states: use head_optimizer for the output layer if set
+            is_output = i == n_total_layers - 1
+            opt = (
+                self._head_optimizer
+                if (self._head_optimizer is not None and is_output)
+                else self._optimizer
+            )
+            opt_states_list.append(opt.init_for_shape(w.shape))
+            opt_states_list.append(opt.init_for_shape(b.shape))
 
         params = MLPParams(
             weights=tuple(weights_list),
@@ -1032,10 +1046,14 @@ class MLPLearner:
             new_traces.append(new_bt)
 
         # Per-parameter optimizer step from traces
+        # Output layer uses head_optimizer if set (last 2 entries: weight + bias)
+        n_trace_entries = len(new_traces)
         all_steps = []
         new_opt_states = []
-        for j in range(len(new_traces)):
-            step, new_opt = self._optimizer.update_from_gradient(
+        for j in range(n_trace_entries):
+            is_output = self._head_optimizer is not None and j >= n_trace_entries - 2
+            opt = self._head_optimizer if is_output else self._optimizer
+            step, new_opt = opt.update_from_gradient(
                 state.optimizer_states[j], new_traces[j], error=error
             )
             all_steps.append(step)

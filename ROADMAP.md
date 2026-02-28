@@ -33,8 +33,10 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - `ContinuingWrapper` for episodic-to-continuing conversion (Alberta Plan Step 6 preview)
 - Agent lifecycle tracking (`step_count`, `birth_timestamp`, `uptime_s`)
 - Representation utility logging for bsuite experiments
+- Hybrid optimizer (`head_optimizer`) for trunk/head optimizer split on MLPLearner and MultiHeadMLPLearner
 
 **Planned**:
+- Neuron utility tracking (per-hidden-unit EMA of gradient magnitude)
 - Feature generation and testing ("generate and test" mechanisms)
 - Nonlinear feature discovery for streaming problems
 - Comparison studies across diverse non-stationarity types

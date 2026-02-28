@@ -4,6 +4,7 @@ Immediate next steps and near-term work items for the Alberta Framework.
 
 ## Step 2 — Remaining Work
 
+- [ ] Neuron utility tracking (per-hidden-unit EMA of gradient magnitude)
 - [ ] Feature generation and testing ("generate and test" mechanisms)
 - [ ] Nonlinear feature discovery for streaming problems
 - [ ] Comparison studies: MLPLearner across diverse non-stationarity types (drift, abrupt, periodic)

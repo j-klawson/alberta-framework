@@ -9,6 +9,7 @@ import pytest
 
 from alberta_framework import (
     AGCBounding,
+    Autostep,
     BatchedMLPResult,
     EMANormalizer,
     MLPLearner,
@@ -794,3 +795,136 @@ class TestMLPLifecycleTracking:
             learner, stream, num_steps=100, key=jr.key(42)
         )
         assert int(state.step_count) == 100
+
+
+class TestHybridOptimizer:
+    """Tests for MLPLearner with head_optimizer (hybrid trunk/head optimizers)."""
+
+    def test_hybrid_init_creates_different_states(self):
+        """Output layer optimizer state type should differ from trunk when using hybrid."""
+        from alberta_framework.core.types import AutostepParamState, LMSState
+
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        # Interleaved: w0, b0, w1, b1
+        # w0, b0 = trunk (LMS), w1, b1 = output (Autostep)
+        assert isinstance(state.optimizer_states[0], LMSState)
+        assert isinstance(state.optimizer_states[1], LMSState)
+        assert isinstance(state.optimizer_states[2], AutostepParamState)
+        assert isinstance(state.optimizer_states[3], AutostepParamState)
+
+    def test_hybrid_update_runs(self):
+        """Basic update with LMS trunk + Autostep head should work."""
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        target = jnp.array([1.0])
+
+        result = learner.update(state, obs, target)
+        chex.assert_shape(result.prediction, (1,))
+        chex.assert_shape(result.error, (1,))
+        chex.assert_shape(result.metrics, (3,))
+        chex.assert_tree_all_finite(result.metrics)
+
+    def test_hybrid_scan_loop(self):
+        """Full learning loop should work with hybrid optimizer."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+
+        chex.assert_shape(metrics, (100, 3))
+        chex.assert_tree_all_finite(metrics)
+        assert int(state.step_count) == 100
+
+    def test_hybrid_default_none_matches_uniform(self):
+        """head_optimizer=None should produce same results as explicit single optimizer."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+
+        learner_default = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        learner_explicit = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=None,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        _, metrics_default = run_mlp_learning_loop(
+            learner_default, stream, num_steps=50, key=jr.key(42)
+        )
+        _, metrics_explicit = run_mlp_learning_loop(
+            learner_explicit, stream, num_steps=50, key=jr.key(42)
+        )
+
+        chex.assert_trees_all_close(metrics_default, metrics_explicit)
+
+    def test_hybrid_two_hidden_layers(self):
+        """Hybrid optimizer should work with two hidden layers."""
+        from alberta_framework.core.types import AutostepParamState, LMSState
+
+        learner = MLPLearner(
+            hidden_sizes=(32, 16), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        # Interleaved: w0, b0, w1, b1, w2, b2
+        # w0, b0, w1, b1 = trunk (LMS), w2, b2 = output (Autostep)
+        assert isinstance(state.optimizer_states[0], LMSState)
+        assert isinstance(state.optimizer_states[1], LMSState)
+        assert isinstance(state.optimizer_states[2], LMSState)
+        assert isinstance(state.optimizer_states[3], LMSState)
+        assert isinstance(state.optimizer_states[4], AutostepParamState)
+        assert isinstance(state.optimizer_states[5], AutostepParamState)
+
+        # Should run without error
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=50, key=jr.key(42)
+        )
+        chex.assert_shape(metrics, (50, 3))
+        chex.assert_tree_all_finite(metrics)
+
+    def test_hybrid_batched(self):
+        """Batched loop should work with hybrid optimizer."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,), sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=Autostep(initial_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        keys = jr.split(jr.key(42), 3)
+        result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=50, keys=keys
+        )
+
+        assert isinstance(result, BatchedMLPResult)
+        chex.assert_shape(result.metrics, (3, 50, 3))
+        chex.assert_tree_all_finite(result.metrics)
