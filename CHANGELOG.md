@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-02-27
+
+### Added
+
+- **Hybrid optimizer (`head_optimizer`)** — separate optimizer for trunk vs head layers on `MLPLearner` and `MultiHeadMLPLearner`
+  - `MLPLearner(head_optimizer=...)`: output layer uses `head_optimizer`, hidden layers use `optimizer`
+  - `MultiHeadMLPLearner(head_optimizer=...)`: all prediction heads use `head_optimizer`, trunk uses `optimizer`
+  - Enables stable LMS+ObGD for non-convex hidden layers with adaptive Autostep for the linear output head
+  - Backwards compatible: `head_optimizer=None` (default) keeps all layers on the same optimizer
+  - 10 new tests (6 MLPLearner, 4 MultiHeadMLPLearner)
+
 ## [0.9.0] - 2026-02-22
 
 ### Added
