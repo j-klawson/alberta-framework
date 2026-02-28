@@ -1,0 +1,30 @@
+{
+  "title": "Alberta Framework: A JAX-Based Research Framework for Continual AI",
+  "description": "Implementation of the Alberta Plan for AI Research — continual learning with meta-learned step-sizes. Includes IDBD, Autostep, and ObGD optimizers with scan-based learning loops, online normalization, and publication-quality analysis tools.",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "Apache-2.0",
+  "creators": [
+    {
+      "name": "Lawson, Keith",
+      "affiliation": ""
+    }
+  ],
+  "keywords": [
+    "continual learning",
+    "meta-learning",
+    "reinforcement learning",
+    "adaptive step-sizes",
+    "JAX",
+    "IDBD",
+    "Autostep",
+    "Alberta Plan"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/j-klawson/alberta-framework",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
