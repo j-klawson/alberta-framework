@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/alberta-framework.svg)](https://pypi.org/project/alberta-framework/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![DOI](https://zenodo.org/badge/1136778767.svg)](https://doi.org/10.5281/zenodo.18814470)
 
 > **Warning:** This framework is under active research development. The API is unstable and subject to breaking changes between releases. It is not intended for production use.
 
