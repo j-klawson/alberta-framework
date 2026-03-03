@@ -340,6 +340,85 @@ batched = run_multi_head_learning_loop_batched(learner, observations, targets, k
 # batched.per_head_metrics: (30, 1000, 4, 3)
 ```
 
+### Single-Step API for Daemon Use
+
+Both `MLPLearner` and `MultiHeadMLPLearner` support single-step `predict()`/`update()` with unbatched 1D observations. This is the intended usage for daemon deployments (e.g. rlsecd) where one observation arrives at a time from log events.
+
+**JIT warmup pattern** — at daemon startup, run dummy calls to trigger JAX compilation so the first real event is fast:
+```python
+import jax.numpy as jnp
+from alberta_framework import MultiHeadMLPLearner, Autostep, ObGDBounding, EMANormalizer
+
+learner = MultiHeadMLPLearner(
+    n_heads=5, hidden_sizes=(64, 64),
+    optimizer=Autostep(initial_step_size=0.01),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+state = learner.init(feature_dim=20, key=jr.key(42))
+
+# Warmup: triggers JIT trace (use NaN targets to avoid modifying state)
+dummy_obs = jnp.zeros(20)
+dummy_targets = jnp.full(5, jnp.nan)
+_ = learner.predict(state, dummy_obs)
+_ = learner.update(state, dummy_obs, dummy_targets)
+
+# Now each real event call is fast:
+result = learner.update(state, real_obs, real_targets)
+state = result.state
+```
+
+Key behaviors:
+- NaN target masking works per-step: inactive heads preserve params, traces, and optimizer states
+- Normalizer updates with every observation regardless of head activity
+- `step_count` increments with every update call
+- No hidden batch-dimension assumptions in predict or update
+
+### Checkpoint Utilities
+
+Save and load any learner state to disk using `save_checkpoint`/`load_checkpoint`:
+
+```python
+from alberta_framework import save_checkpoint, load_checkpoint
+
+# Save state + optional metadata
+save_checkpoint(state, "agent.ckpt", metadata={"epoch": 1, "mae": 0.15})
+
+# Load: template provides the PyTree structure
+template = learner.init(feature_dim=20, key=jr.key(0))
+loaded_state, meta = load_checkpoint(template, "agent.ckpt")
+```
+
+- Creates `{path}.npz` (arrays) and `{path}.json` (metadata + structural validation)
+- Template-based loading: caller provides a fresh state via `learner.init()` for the treedef
+- Python float lifecycle fields (`birth_timestamp`, `uptime_s`) are preserved correctly
+- Format version in JSON for future compatibility
+
+### Learner Config Serialization
+
+All learners, optimizers, bounders, and normalizers support `to_config()`/`from_config()` for reconstructing objects from plain dicts:
+
+```python
+from alberta_framework import MultiHeadMLPLearner, Autostep, ObGDBounding, EMANormalizer
+
+learner = MultiHeadMLPLearner(
+    n_heads=5, hidden_sizes=(64, 64),
+    optimizer=Autostep(initial_step_size=0.01),
+    bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+
+# Serialize to JSON-friendly dict
+config = learner.to_config()
+# {"type": "MultiHeadMLPLearner", "n_heads": 5, "hidden_sizes": [64, 64],
+#  "optimizer": {"type": "Autostep", ...}, "bounder": {"type": "ObGDBounding", ...}, ...}
+
+# Reconstruct from config
+restored = MultiHeadMLPLearner.from_config(config)
+```
+
+Dispatchers for components: `optimizer_from_config()`, `bounder_from_config()`, `normalizer_from_config()`.
+
 ### Success Criterion
 IDBD/Autostep should beat LMS when starting from the same step-size (demonstrates adaptation).
 With optimal parameters, adaptive methods should match best grid-searched LMS.

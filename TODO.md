@@ -18,6 +18,14 @@ Immediate next steps and near-term work items for the Alberta Framework.
 - [ ] Horde architecture: many GVFs learning in parallel via MultiHeadMLPLearner
 - [ ] Integration with ObGD bounding for stable GVF learning
 
+## rlsecd Integration
+
+- [ ] AF-2: Get permission from Edan Meyer to publish IDBD-MLP
+- [ ] AF-2: IDBD-MLP 100k-event replay test in rlsecd (post permission + implementation)
+- [ ] AF-2: IDBD-MLP full 1.6M log stability test
+- [ ] Simplify rlsecd SecurityAgent to use framework checkpoint utilities
+- [ ] Simplify rlsecd SecurityAgent to use framework config serialization
+
 ## Infrastructure
 
 - [ ] Update CHANGELOG.md with each release (moved from CLAUDE.md)

@@ -42,6 +42,9 @@ References
 
 __version__ = "0.9.0"
 
+# Checkpoint utilities
+from alberta_framework.core.checkpoints import load_checkpoint, save_checkpoint
+
 # Core types
 # Learners
 # Initializers
@@ -81,6 +84,7 @@ from alberta_framework.core.normalizers import (
     Normalizer,
     WelfordNormalizer,
     WelfordNormalizerState,
+    normalizer_from_config,
 )
 
 # Optimizers
@@ -97,6 +101,8 @@ from alberta_framework.core.optimizers import (
     Optimizer,
     TDOptimizer,
     TDOptimizerUpdate,
+    bounder_from_config,
+    optimizer_from_config,
 )
 from alberta_framework.core.types import (
     AutostepParamState,
@@ -232,6 +238,8 @@ __all__ = [
     "ObGD",
     "ObGDBounding",
     "Optimizer",
+    "optimizer_from_config",
+    "bounder_from_config",
     # Optimizers - TD Learning
     "AutoTDIDBD",
     "TDIDBD",
@@ -243,6 +251,7 @@ __all__ = [
     "Normalizer",
     "EMANormalizer",
     "WelfordNormalizer",
+    "normalizer_from_config",
     # Learners - Supervised Learning
     "LinearLearner",
     "run_learning_loop",
@@ -295,6 +304,9 @@ __all__ = [
     "compute_running_mean",
     "compute_tracking_error",
     "extract_metric",
+    # Checkpoint utilities
+    "save_checkpoint",
+    "load_checkpoint",
     # Timing
     "Timer",
     "format_duration",

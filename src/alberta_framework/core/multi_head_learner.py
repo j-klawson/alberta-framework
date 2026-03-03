@@ -186,7 +186,8 @@ class MultiHeadMLPLearner:
 
     Attributes:
         n_heads: Number of prediction heads
-        hidden_sizes: Tuple of hidden layer sizes
+        hidden_sizes: Tuple of hidden layer sizes. Pass ``()`` for a multi-head
+            linear model (heads project directly from input features).
         optimizer: Optimizer for per-weight step-size adaptation
         bounder: Optional update bounder (e.g. ObGDBounding)
         normalizer: Optional feature normalizer
@@ -195,6 +196,29 @@ class MultiHeadMLPLearner:
         lamda: Eligibility trace decay parameter
         sparsity: Fraction of weights zeroed out per output neuron
         leaky_relu_slope: Negative slope for LeakyReLU activation
+
+    Single-Step (Daemon) Usage
+    --------------------------
+    Both ``predict()`` and ``update()`` work with single unbatched
+    observations (1D arrays). This is the intended usage for daemon-style
+    deployments where one observation arrives at a time.
+
+    For low-latency daemon use (e.g. rlsecd), pre-compile ``predict``
+    and ``update`` at startup by running a dummy warmup call. This
+    triggers JAX's JIT tracing so the first real event is fast:
+
+    ```python
+    # At daemon startup, after learner.init():
+    dummy_obs = jnp.zeros(feature_dim)
+    dummy_targets = jnp.full(n_heads, jnp.nan)
+    _ = learner.predict(state, dummy_obs)                    # Triggers JIT trace
+    result = learner.update(state, dummy_obs, dummy_targets)  # Triggers JIT trace
+    # First real event will now be fast
+    ```
+
+    NaN target masking works per-step: pass ``jnp.nan`` for any head
+    that should not update. Inactive heads preserve their params,
+    traces, and optimizer states.
     """
 
     def __init__(
@@ -260,6 +284,76 @@ class MultiHeadMLPLearner:
         """The feature normalizer, or None if normalization is disabled."""
         return self._normalizer
 
+    def to_config(self) -> dict[str, Any]:
+        """Serialize learner configuration to dict.
+
+        Returns:
+            Dict with all constructor arguments needed to recreate
+            the learner via ``from_config()``.
+        """
+        config: dict[str, Any] = {
+            "type": "MultiHeadMLPLearner",
+            "n_heads": self._n_heads,
+            "hidden_sizes": list(self._hidden_sizes),
+            "optimizer": self._optimizer.to_config(),
+            "bounder": self._bounder.to_config() if self._bounder is not None else None,
+            "normalizer": (
+                self._normalizer.to_config() if self._normalizer is not None else None
+            ),
+            "head_optimizer": (
+                self._head_optimizer.to_config()
+                if self._head_optimizer is not None
+                else None
+            ),
+            "sparsity": self._sparsity,
+            "leaky_relu_slope": self._leaky_relu_slope,
+            "use_layer_norm": self._use_layer_norm,
+            "gamma": self._gamma,
+            "lamda": self._lamda,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "MultiHeadMLPLearner":
+        """Reconstruct learner from a config dict.
+
+        Args:
+            config: Dict as produced by ``to_config()``
+
+        Returns:
+            Reconstructed MultiHeadMLPLearner instance
+        """
+        from alberta_framework.core.normalizers import normalizer_from_config
+        from alberta_framework.core.optimizers import (
+            bounder_from_config,
+            optimizer_from_config,
+        )
+
+        config = dict(config)
+        config.pop("type", None)
+
+        optimizer = optimizer_from_config(config.pop("optimizer"))
+        bounder_cfg = config.pop("bounder", None)
+        bounder = bounder_from_config(bounder_cfg) if bounder_cfg is not None else None
+        normalizer_cfg = config.pop("normalizer", None)
+        normalizer = (
+            normalizer_from_config(normalizer_cfg) if normalizer_cfg is not None else None
+        )
+        head_opt_cfg = config.pop("head_optimizer", None)
+        head_optimizer = (
+            optimizer_from_config(head_opt_cfg) if head_opt_cfg is not None else None
+        )
+
+        return cls(
+            n_heads=config.pop("n_heads"),
+            hidden_sizes=tuple(config.pop("hidden_sizes")),
+            optimizer=optimizer,
+            bounder=bounder,
+            normalizer=normalizer,
+            head_optimizer=head_optimizer,
+            **config,
+        )
+
     def init(self, feature_dim: int, key: Array) -> MultiHeadMLPState:
         """Initialize multi-head MLP learner state with sparse weights.
 
@@ -298,8 +392,9 @@ class MultiHeadMLPLearner:
             biases=tuple(trunk_biases),
         )
 
-        # Heads: n_heads output layers, each (1, H_last)
-        h_last = self._hidden_sizes[-1]
+        # Heads: n_heads output layers, each (1, h_last)
+        # h_last = last hidden dim, or feature_dim when no trunk layers
+        h_last = self._hidden_sizes[-1] if self._hidden_sizes else feature_dim
         head_weights: list[Array] = []
         head_biases: list[Array] = []
         head_traces_list: list[tuple[Array, Array]] = []
@@ -360,6 +455,8 @@ class MultiHeadMLPLearner:
         Returns:
             Hidden representation of shape ``(H_last,)``
         """
+        if len(weights) == 0:
+            return observation
         x = observation
         for i in range(len(weights)):
             x = weights[i] @ x + biases[i]

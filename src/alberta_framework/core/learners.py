@@ -6,7 +6,7 @@ training loops.
 """
 
 import time
-from typing import Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import chex
 import jax
@@ -801,6 +801,22 @@ class MLPLearner:
         lamda: Eligibility trace decay parameter
         sparsity: Fraction of weights zeroed out per output neuron
         leaky_relu_slope: Negative slope for LeakyReLU activation
+
+    Single-Step (Daemon) Usage
+    --------------------------
+    Both ``predict()`` and ``update()`` work with single unbatched
+    observations (1D arrays of shape ``(feature_dim,)``). This is the
+    intended usage for daemon-style deployments.
+
+    For low-latency daemon use, pre-compile ``predict`` and ``update``
+    at startup by running a dummy warmup call:
+
+    ```python
+    dummy_obs = jnp.zeros(feature_dim)
+    dummy_target = jnp.zeros(1)
+    _ = learner.predict(state, dummy_obs)
+    result = learner.update(state, dummy_obs, dummy_target)
+    ```
     """
 
     def __init__(
@@ -861,6 +877,68 @@ class MLPLearner:
     ) -> Normalizer[EMANormalizerState] | Normalizer[WelfordNormalizerState] | None:
         """The feature normalizer, or None if normalization is disabled."""
         return self._normalizer
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize learner configuration to dict.
+
+        Returns:
+            Dict with all constructor arguments needed to recreate
+            the learner via ``from_config()``.
+        """
+        config: dict[str, Any] = {
+            "type": "MLPLearner",
+            "hidden_sizes": list(self._hidden_sizes),
+            "optimizer": self._optimizer.to_config(),
+            "bounder": self._bounder.to_config() if self._bounder is not None else None,
+            "normalizer": self._normalizer.to_config() if self._normalizer is not None else None,
+            "head_optimizer": (
+                self._head_optimizer.to_config()
+                if self._head_optimizer is not None
+                else None
+            ),
+            "sparsity": self._sparsity,
+            "leaky_relu_slope": self._leaky_relu_slope,
+            "use_layer_norm": self._use_layer_norm,
+            "gamma": self._gamma,
+            "lamda": self._lamda,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "MLPLearner":
+        """Reconstruct learner from a config dict.
+
+        Args:
+            config: Dict as produced by ``to_config()``
+
+        Returns:
+            Reconstructed MLPLearner instance
+        """
+        from alberta_framework.core.normalizers import normalizer_from_config
+        from alberta_framework.core.optimizers import (
+            bounder_from_config,
+            optimizer_from_config,
+        )
+
+        config = dict(config)
+        config.pop("type", None)
+
+        optimizer = optimizer_from_config(config.pop("optimizer"))
+        bounder_cfg = config.pop("bounder", None)
+        bounder = bounder_from_config(bounder_cfg) if bounder_cfg is not None else None
+        normalizer_cfg = config.pop("normalizer", None)
+        normalizer = normalizer_from_config(normalizer_cfg) if normalizer_cfg is not None else None
+        head_opt_cfg = config.pop("head_optimizer", None)
+        head_optimizer = optimizer_from_config(head_opt_cfg) if head_opt_cfg is not None else None
+
+        return cls(
+            hidden_sizes=tuple(config.pop("hidden_sizes")),
+            optimizer=optimizer,
+            bounder=bounder,
+            normalizer=normalizer,
+            head_optimizer=head_optimizer,
+            **config,
+        )
 
     def init(self, feature_dim: int, key: Array) -> MLPLearnerState:
         """Initialize MLP learner state with sparse weights.

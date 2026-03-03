@@ -34,8 +34,13 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Agent lifecycle tracking (`step_count`, `birth_timestamp`, `uptime_s`)
 - Representation utility logging for bsuite experiments
 - Hybrid optimizer (`head_optimizer`) for trunk/head optimizer split on MLPLearner and MultiHeadMLPLearner
+- Checkpoint utilities (`save_checkpoint`/`load_checkpoint`) for persisting learner state
+- Learner config serialization (`to_config`/`from_config`) for all learners, optimizers, bounders, and normalizers
+- Single-step API documentation for daemon integration (including JIT warmup pattern)
+- `MultiHeadMLPLearner` linear baseline support (`hidden_sizes=()`)
 
 **Planned**:
+- IDBD-MLP optimizer (blocked on Edan Meyer permission)
 - Neuron utility tracking (per-hidden-unit EMA of gradient magnitude)
 - Feature generation and testing ("generate and test" mechanisms)
 - Nonlinear feature discovery for streaming problems

@@ -15,6 +15,7 @@ Two normalizer variants are provided:
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 import chex
 import jax.numpy as jnp
@@ -88,6 +89,11 @@ class Normalizer[StateT: (EMANormalizerState, WelfordNormalizerState)](ABC):
             epsilon: Small constant added to std for numerical stability
         """
         self._epsilon = epsilon
+
+    @abstractmethod
+    def to_config(self) -> dict[str, Any]:
+        """Serialize normalizer configuration to dict."""
+        ...
 
     @abstractmethod
     def init(self, feature_dim: int) -> StateT:
@@ -189,6 +195,10 @@ class EMANormalizer(Normalizer[EMANormalizerState]):
         super().__init__(epsilon=epsilon)
         self._decay = decay
 
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {"type": "EMANormalizer", "epsilon": self._epsilon, "decay": self._decay}
+
     def init(self, feature_dim: int) -> EMANormalizerState:
         """Initialize EMA normalizer state.
 
@@ -265,6 +275,10 @@ class WelfordNormalizer(Normalizer[WelfordNormalizerState]):
         epsilon: Small constant for numerical stability
     """
 
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {"type": "WelfordNormalizer", "epsilon": self._epsilon}
+
     def init(self, feature_dim: int) -> WelfordNormalizerState:
         """Initialize Welford normalizer state.
 
@@ -330,3 +344,34 @@ class WelfordNormalizer(Normalizer[WelfordNormalizerState]):
         )
 
         return normalized, new_state
+
+
+# =============================================================================
+# Config serialization dispatcher
+# =============================================================================
+
+_NORMALIZER_REGISTRY: dict[str, type] = {
+    "EMANormalizer": EMANormalizer,
+    "WelfordNormalizer": WelfordNormalizer,
+}
+
+
+def normalizer_from_config(config: dict[str, Any]) -> Normalizer[Any]:
+    """Reconstruct a normalizer from a config dict.
+
+    Args:
+        config: Dict with ``"type"`` key and constructor kwargs
+
+    Returns:
+        Reconstructed normalizer instance
+
+    Raises:
+        ValueError: If the normalizer type is unknown
+    """
+    config = dict(config)
+    type_name = config.pop("type")
+    cls = _NORMALIZER_REGISTRY.get(type_name)
+    if cls is None:
+        raise ValueError(f"Unknown normalizer type: {type_name!r}")
+    result: Normalizer[Any] = cls(**config)
+    return result

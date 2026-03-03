@@ -1002,3 +1002,168 @@ class TestMultiHeadHybridOptimizer:
             result_default.per_head_metrics,
             result_explicit.per_head_metrics,
         )
+
+
+# =============================================================================
+# Linear baseline tests (hidden_sizes=())
+# =============================================================================
+
+
+class TestMultiHeadLinearBaseline:
+    """Tests for MultiHeadMLPLearner with hidden_sizes=() (linear model)."""
+
+    def test_init_succeeds(self):
+        """hidden_sizes=() should init without error."""
+        learner = MultiHeadMLPLearner(
+            n_heads=3, hidden_sizes=(), sparsity=0.0
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        # No trunk layers
+        assert len(state.trunk_params.weights) == 0
+        assert len(state.trunk_params.biases) == 0
+        assert len(state.trunk_traces) == 0
+        assert len(state.trunk_optimizer_states) == 0
+
+    def test_head_shapes_match_input(self):
+        """Heads should project from feature_dim directly."""
+        learner = MultiHeadMLPLearner(
+            n_heads=3, hidden_sizes=(), sparsity=0.0
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        assert len(state.head_params.weights) == 3
+        for i in range(3):
+            chex.assert_shape(state.head_params.weights[i], (1, 5))
+            chex.assert_shape(state.head_params.biases[i], (1,))
+
+    def test_predict_correct_shape(self):
+        """predict should return (n_heads,) array."""
+        learner = MultiHeadMLPLearner(
+            n_heads=4, hidden_sizes=(), sparsity=0.0
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        preds = learner.predict(state, obs)
+
+        chex.assert_shape(preds, (4,))
+        chex.assert_tree_all_finite(preds)
+
+    def test_update_correct_shape(self):
+        """update should return correct shapes."""
+        learner = MultiHeadMLPLearner(
+            n_heads=3, hidden_sizes=(), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, 2.0, 3.0])
+
+        result = learner.update(state, obs, targets)
+
+        chex.assert_shape(result.predictions, (3,))
+        chex.assert_shape(result.errors, (3,))
+        chex.assert_shape(result.per_head_metrics, (3, 3))
+        chex.assert_tree_all_finite(result.predictions)
+        chex.assert_tree_all_finite(result.per_head_metrics)
+
+    def test_state_updates(self):
+        """Head params should change after update."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(), step_size=0.1, sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, 2.0])
+
+        result = learner.update(state, obs, targets)
+
+        # Head weights should have changed
+        assert not jnp.allclose(
+            result.state.head_params.weights[0],
+            state.head_params.weights[0],
+        )
+        assert int(result.state.step_count) == 1
+
+    def test_error_reduction(self):
+        """Multiple updates on fixed target should reduce error."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(), step_size=0.1, sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.array([1.0, 0.5, -0.3, 0.2, 0.8])
+        targets = jnp.array([2.0, -1.0])
+
+        initial_preds = learner.predict(state, obs)
+        initial_se = float(jnp.sum((initial_preds - targets) ** 2))
+
+        for _ in range(100):
+            result = learner.update(state, obs, targets)
+            state = result.state
+
+        final_preds = learner.predict(state, obs)
+        final_se = float(jnp.sum((final_preds - targets) ** 2))
+
+        assert final_se < initial_se
+
+    def test_nan_masking(self):
+        """NaN targets should leave inactive heads unchanged."""
+        learner = MultiHeadMLPLearner(
+            n_heads=3, hidden_sizes=(), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, jnp.nan, 3.0])
+
+        result = learner.update(state, obs, targets)
+
+        # Head 1 should be unchanged
+        chex.assert_trees_all_close(
+            result.state.head_params.weights[1],
+            state.head_params.weights[1],
+        )
+        assert jnp.isnan(result.errors[1])
+
+    def test_scan_loop(self):
+        """Should work in scan-based learning loop."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(), sparsity=0.0,
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(0))
+
+        key = jr.key(42)
+        k1, k2 = jr.split(key)
+        observations = jr.normal(k1, (30, 5))
+        targets = jr.normal(k2, (30, 2))
+
+        result = run_multi_head_learning_loop(
+            learner, state, observations, targets
+        )
+
+        assert isinstance(result, MultiHeadLearningResult)
+        chex.assert_shape(result.per_head_metrics, (30, 2, 3))
+
+    def test_with_normalizer(self):
+        """Should work with EMANormalizer."""
+        learner = MultiHeadMLPLearner(
+            n_heads=2, hidden_sizes=(), sparsity=0.0,
+            normalizer=EMANormalizer(),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        targets = jnp.array([1.0, 2.0])
+
+        result = learner.update(state, obs, targets)
+        chex.assert_tree_all_finite(result.predictions)
+        assert result.state.normalizer_state is not None

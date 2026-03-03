@@ -44,6 +44,11 @@ class Bounder(ABC):
     """
 
     @abstractmethod
+    def to_config(self) -> dict[str, Any]:
+        """Serialize bounding configuration to dict."""
+        ...
+
+    @abstractmethod
     def bound(
         self,
         steps: tuple[Array, ...],
@@ -82,6 +87,10 @@ class ObGDBounding(Bounder):
 
     def __init__(self, kappa: float = 2.0):
         self._kappa = kappa
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {"type": "ObGDBounding", "kappa": self._kappa}
 
     def bound(
         self,
@@ -151,6 +160,10 @@ class AGCBounding(Bounder):
         self._clip_factor = clip_factor
         self._eps = eps
 
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {"type": "AGCBounding", "clip_factor": self._clip_factor, "eps": self._eps}
+
     def bound(
         self,
         steps: tuple[Array, ...],
@@ -217,6 +230,11 @@ class OptimizerUpdate:
 
 class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, AutostepParamState)](ABC):
     """Base class for optimizers."""
+
+    @abstractmethod
+    def to_config(self) -> dict[str, Any]:
+        """Serialize optimizer configuration to dict."""
+        ...
 
     @abstractmethod
     def init(self, feature_dim: int) -> StateT:
@@ -324,6 +342,10 @@ class LMS(Optimizer[LMSState]):
         """
         self._step_size = step_size
 
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {"type": "LMS", "step_size": self._step_size}
+
     def init(self, feature_dim: int) -> LMSState:
         """Initialize LMS state.
 
@@ -425,6 +447,14 @@ class IDBD(Optimizer[IDBDState]):
         """
         self._initial_step_size = initial_step_size
         self._meta_step_size = meta_step_size
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {
+            "type": "IDBD",
+            "initial_step_size": self._initial_step_size,
+            "meta_step_size": self._meta_step_size,
+        }
 
     def init(self, feature_dim: int) -> IDBDState:
         """Initialize IDBD state.
@@ -570,6 +600,15 @@ class Autostep(Optimizer[AutostepState]):
         self._initial_step_size = initial_step_size
         self._meta_step_size = meta_step_size
         self._tau = tau
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {
+            "type": "Autostep",
+            "initial_step_size": self._initial_step_size,
+            "meta_step_size": self._meta_step_size,
+            "tau": self._tau,
+        }
 
     def init(self, feature_dim: int) -> AutostepState:
         """Initialize Autostep state.
@@ -865,6 +904,16 @@ class ObGD(Optimizer[ObGDState]):
         self._kappa = kappa
         self._gamma = gamma
         self._lamda = lamda
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize configuration to dict."""
+        return {
+            "type": "ObGD",
+            "step_size": self._step_size,
+            "kappa": self._kappa,
+            "gamma": self._gamma,
+            "lamda": self._lamda,
+        }
 
     def init(self, feature_dim: int) -> ObGDState:
         """Initialize ObGD state.
@@ -1371,3 +1420,62 @@ class AutoTDIDBD(TDOptimizer[AutoTDIDBDState]):
                 "mean_normalizer": jnp.mean(new_normalizers),
             },
         )
+
+
+# =============================================================================
+# Config serialization dispatchers
+# =============================================================================
+
+_OPTIMIZER_REGISTRY: dict[str, type] = {
+    "LMS": LMS,
+    "IDBD": IDBD,
+    "Autostep": Autostep,
+    "ObGD": ObGD,
+}
+
+_BOUNDER_REGISTRY: dict[str, type] = {
+    "ObGDBounding": ObGDBounding,
+    "AGCBounding": AGCBounding,
+}
+
+
+def optimizer_from_config(config: dict[str, Any]) -> Optimizer[Any]:
+    """Reconstruct an optimizer from a config dict.
+
+    Args:
+        config: Dict with ``"type"`` key and constructor kwargs
+
+    Returns:
+        Reconstructed optimizer instance
+
+    Raises:
+        ValueError: If the optimizer type is unknown
+    """
+    config = dict(config)
+    type_name = config.pop("type")
+    cls = _OPTIMIZER_REGISTRY.get(type_name)
+    if cls is None:
+        raise ValueError(f"Unknown optimizer type: {type_name!r}")
+    result: Optimizer[Any] = cls(**config)
+    return result
+
+
+def bounder_from_config(config: dict[str, Any]) -> Bounder:
+    """Reconstruct a bounder from a config dict.
+
+    Args:
+        config: Dict with ``"type"`` key and constructor kwargs
+
+    Returns:
+        Reconstructed bounder instance
+
+    Raises:
+        ValueError: If the bounder type is unknown
+    """
+    config = dict(config)
+    type_name = config.pop("type")
+    cls = _BOUNDER_REGISTRY.get(type_name)
+    if cls is None:
+        raise ValueError(f"Unknown bounder type: {type_name!r}")
+    result: Bounder = cls(**config)
+    return result
