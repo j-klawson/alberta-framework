@@ -45,6 +45,14 @@ __version__ = "0.11.0"
 # Checkpoint utilities
 from alberta_framework.core.checkpoints import load_checkpoint, save_checkpoint
 
+# Diagnostics
+from alberta_framework.core.diagnostics import (
+    FeatureRelevance,
+    compute_feature_relevance,
+    compute_feature_sensitivity,
+    relevance_to_dict,
+)
+
 # Core types
 # Learners
 # Initializers
@@ -307,6 +315,11 @@ __all__ = [
     # Checkpoint utilities
     "save_checkpoint",
     "load_checkpoint",
+    # Diagnostics
+    "FeatureRelevance",
+    "compute_feature_relevance",
+    "compute_feature_sensitivity",
+    "relevance_to_dict",
     # Timing
     "Timer",
     "format_duration",

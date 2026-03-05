@@ -29,7 +29,8 @@ src/alberta_framework/
 │   ├── normalizers.py  # Normalizer ABC, EMANormalizer, WelfordNormalizer
 │   ├── initializers.py # sparse_init (LeCun + sparsity)
 │   ├── learners.py     # LinearLearner, MLPLearner, TDLinearLearner, learning loops
-│   └── multi_head_learner.py  # MultiHeadMLPLearner, multi-head learning loops
+│   ├── multi_head_learner.py  # MultiHeadMLPLearner, multi-head learning loops
+│   └── diagnostics.py  # FeatureRelevance, compute_feature_relevance, compute_feature_sensitivity, relevance_to_dict
 ├── streams/
 │   ├── base.py         # ScanStream protocol (pure function interface for jax.lax.scan)
 │   ├── synthetic.py    # RandomWalkStream, AbruptChangeStream, CyclicStream, PeriodicChangeStream, ScaledStreamWrapper, DynamicScaleShiftStream, ScaleDriftStream
@@ -418,6 +419,51 @@ restored = MultiHeadMLPLearner.from_config(config)
 ```
 
 Dispatchers for components: `optimizer_from_config()`, `bounder_from_config()`, `normalizer_from_config()`.
+
+### Feature Relevance Diagnostics
+
+Extract per-feature, per-head relevance metrics from `MultiHeadMLPState` for periodic diagnostic reporting. No hot-path changes — all metrics are derived from existing state arrays.
+
+**Tier 1 (zero-cost state extraction):**
+- `weight_relevance`: Path-norm from input features to each head — `(n_heads, feature_dim)`
+- `step_size_activity`: Mean absolute step-size on input layer per feature — `(feature_dim,)`
+- `trace_activity`: Mean absolute trunk trace on input layer per feature — `(feature_dim,)`
+- `normalizer_mean`/`normalizer_std`: Per-feature normalizer estimates (None if no normalizer)
+- `head_reliance`: Per-head weight magnitude over last hidden layer — `(n_heads, hidden_dim_last)`
+- `head_mean_step_size`: Mean step-size per head (None for LMS) — `(n_heads,)`
+
+**Tier 2 (periodic Jacobian):**
+- `compute_feature_sensitivity`: `d(pred_h)/d(obs_f)` via `jax.jacrev` — `(n_heads, feature_dim)`
+
+```python
+import jax
+from alberta_framework import (
+    MultiHeadMLPLearner, Autostep, ObGDBounding, EMANormalizer,
+    compute_feature_relevance, compute_feature_sensitivity, relevance_to_dict,
+)
+
+learner = MultiHeadMLPLearner(
+    n_heads=5, hidden_sizes=(64, 64),
+    optimizer=Autostep(), bounder=ObGDBounding(kappa=2.0),
+    normalizer=EMANormalizer(decay=0.99),
+)
+state = learner.init(feature_dim=12, key=jr.key(42))
+
+# Tier 1: ~10-50us after JIT
+jit_relevance = jax.jit(compute_feature_relevance)
+relevance = jit_relevance(state)
+
+# Tier 2: ~100-500us (Jacobian)
+obs = jnp.zeros(12)
+sensitivity = compute_feature_sensitivity(learner, state, obs)
+
+# JSON-serializable dict for logging
+FEATURE_NAMES = ["auth_attempts_1min", "ip_reputation", ...]
+HEAD_NAMES = ["is_malicious", "bot_detect", "attack_stage", "session_val", "anomaly"]
+report = relevance_to_dict(relevance, FEATURE_NAMES, HEAD_NAMES)
+```
+
+`relevance_to_dict` includes `normalized_weight_relevance` (scaled by normalizer std) when a normalizer is present, giving relevance in raw input units.
 
 ### Success Criterion
 IDBD/Autostep should beat LMS when starting from the same step-size (demonstrates adaptation).

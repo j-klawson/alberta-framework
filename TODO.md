@@ -25,6 +25,7 @@ Immediate next steps and near-term work items for the Alberta Framework.
 - [ ] AF-2: IDBD-MLP full 1.6M log stability test
 - [ ] Simplify rlsecd SecurityAgent to use framework checkpoint utilities
 - [ ] Simplify rlsecd SecurityAgent to use framework config serialization
+- [ ] Integrate `compute_feature_relevance` into rlsecd periodic reporting (60s interval)
 
 ## Infrastructure
 

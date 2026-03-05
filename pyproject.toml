@@ -176,6 +176,10 @@ disable_error_code = ["call-arg"]
 module = "alberta_framework.streams.gymnasium"
 disable_error_code = ["call-arg"]
 
+[[tool.mypy.overrides]]
+module = "alberta_framework.core.diagnostics"
+disable_error_code = ["call-arg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"

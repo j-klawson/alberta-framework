@@ -38,6 +38,7 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Learner config serialization (`to_config`/`from_config`) for all learners, optimizers, bounders, and normalizers
 - Single-step API documentation for daemon integration (including JIT warmup pattern)
 - `MultiHeadMLPLearner` linear baseline support (`hidden_sizes=()`)
+- Feature relevance diagnostics (`compute_feature_relevance`, `compute_feature_sensitivity`, `relevance_to_dict`) for periodic daemon reporting
 
 **Planned**:
 - IDBD-MLP optimizer (blocked on Edan Meyer permission)
