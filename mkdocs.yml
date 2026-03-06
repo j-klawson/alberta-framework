@@ -92,6 +92,7 @@ nav:
     - Optimizers: guide/optimizers.md
     - Streams: guide/streams.md
     - Gymnasium Integration: guide/gymnasium.md
+    - Daemon Usage: guide/daemon-usage.md
     - Experiments: guide/experiments.md
   - API Reference: reference/
   - Contributing: contributing.md

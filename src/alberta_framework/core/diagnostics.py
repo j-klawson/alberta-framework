@@ -182,7 +182,8 @@ def compute_feature_sensitivity(
     """
 
     def predict_fn(obs: Array) -> Array:
-        return learner.predict(state, obs)
+        preds: Array = learner.predict(state, obs)
+        return preds
 
     jacobian: Array = jax.jacrev(predict_fn)(observation)  # (n_heads, feature_dim)
     return jacobian

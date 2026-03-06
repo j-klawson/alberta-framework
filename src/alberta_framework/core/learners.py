@@ -5,6 +5,7 @@ for temporally-uniform learning. Uses JAX's scan for efficient JIT-compiled
 training loops.
 """
 
+import functools
 import time
 from typing import Any, Protocol, TypeVar, cast
 
@@ -1034,8 +1035,12 @@ class MLPLearner:
         x = weights[-1] @ x + biases[-1]
         return jnp.squeeze(x)
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def predict(self, state: MLPLearnerState, observation: Observation) -> Prediction:
         """Compute prediction for an observation.
+
+        JIT-compiled automatically. First call triggers tracing; subsequent
+        calls with the same learner instance use the cached compilation.
 
         Args:
             state: Current MLP learner state
@@ -1053,6 +1058,7 @@ class MLPLearner:
         )
         return jnp.atleast_1d(y)
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def update(
         self,
         state: MLPLearnerState,
@@ -1061,7 +1067,9 @@ class MLPLearner:
     ) -> MLPUpdateResult:
         """Update MLP given observation and target.
 
-        Performs one step of the learning algorithm:
+        JIT-compiled automatically. Performs one step of the learning
+        algorithm:
+
         1. Optionally normalize observation
         2. Compute prediction and error
         3. Compute gradients via jax.grad on the forward pass

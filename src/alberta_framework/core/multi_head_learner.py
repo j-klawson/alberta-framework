@@ -15,6 +15,7 @@ pass through the trunk regardless of the number of heads.
 Reference: Elsayed et al. 2024, "Streaming Deep Reinforcement Learning Finally Works"
 """
 
+import functools
 import math
 import time
 from typing import Any
@@ -203,16 +204,16 @@ class MultiHeadMLPLearner:
     observations (1D arrays). This is the intended usage for daemon-style
     deployments where one observation arrives at a time.
 
-    For low-latency daemon use (e.g. rlsecd), pre-compile ``predict``
-    and ``update`` at startup by running a dummy warmup call. This
-    triggers JAX's JIT tracing so the first real event is fast:
+    Both methods are JIT-compiled automatically. The first call triggers
+    JAX's tracing; subsequent calls use the cached compilation. For
+    low-latency startup, run a warmup call so the first real event is fast:
 
     ```python
     # At daemon startup, after learner.init():
     dummy_obs = jnp.zeros(feature_dim)
     dummy_targets = jnp.full(n_heads, jnp.nan)
-    _ = learner.predict(state, dummy_obs)                    # Triggers JIT trace
-    result = learner.update(state, dummy_obs, dummy_targets)  # Triggers JIT trace
+    learner.predict(state, dummy_obs).block_until_ready()     # Warmup trace
+    learner.update(state, dummy_obs, dummy_targets)            # Warmup trace
     # First real event will now be fast
     ```
 
@@ -481,8 +482,12 @@ class MultiHeadMLPLearner:
         """
         return jnp.squeeze(head_w @ hidden + head_b)
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def predict(self, state: MultiHeadMLPState, observation: Array) -> Array:
         """Compute predictions from all heads.
+
+        JIT-compiled automatically. First call triggers tracing; subsequent
+        calls with the same learner instance use the cached compilation.
 
         Args:
             state: Current multi-head MLP learner state
@@ -514,6 +519,7 @@ class MultiHeadMLPLearner:
 
         return jnp.array(predictions)
 
+    @functools.partial(jax.jit, static_argnums=(0,))
     def update(
         self,
         state: MultiHeadMLPState,
@@ -522,9 +528,10 @@ class MultiHeadMLPLearner:
     ) -> MultiHeadMLPUpdateResult:
         """Update multi-head MLP given observation and per-head targets.
 
-        Uses VJP with accumulated cotangents for a single backward pass
-        through the trunk. Error from each active head is folded into the
-        trunk gradient before trace accumulation.
+        JIT-compiled automatically. Uses VJP with accumulated cotangents
+        for a single backward pass through the trunk. Error from each
+        active head is folded into the trunk gradient before trace
+        accumulation.
 
         Args:
             state: Current state

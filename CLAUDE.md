@@ -127,7 +127,7 @@ Per-unit gradient clipping scaled by weight norm. Fine-grained unlike ObGD's glo
 Shared trunk, N independent heads. VJP with accumulated cotangents. NaN targets mask inactive heads. Same composability as MLPLearner. Supports `hidden_sizes=()` for linear baseline.
 
 ### Key Features (brief)
-- **Single-step API**: `predict()`/`update()` with unbatched 1D obs for daemon use (JIT warmup pattern in source)
+- **Single-step API**: `predict()`/`update()` with unbatched 1D obs for daemon use, JIT-compiled automatically (see `docs/guide/daemon-usage.md`)
 - **Checkpoint utils**: `save_checkpoint`/`load_checkpoint` (npz + json)
 - **Config serialization**: `to_config()`/`from_config()` on all components; dispatchers: `optimizer_from_config()`, etc.
 - **Feature diagnostics**: `compute_feature_relevance` (zero-cost), `compute_feature_sensitivity` (Jacobian)

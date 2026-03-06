@@ -36,7 +36,8 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Hybrid optimizer (`head_optimizer`) for trunk/head optimizer split on MLPLearner and MultiHeadMLPLearner
 - Checkpoint utilities (`save_checkpoint`/`load_checkpoint`) for persisting learner state
 - Learner config serialization (`to_config`/`from_config`) for all learners, optimizers, bounders, and normalizers
-- Single-step API documentation for daemon integration (including JIT warmup pattern)
+- Built-in JIT compilation on `MLPLearner` and `MultiHeadMLPLearner` `predict()`/`update()` methods
+- Daemon usage guide (`docs/guide/daemon-usage.md`) covering single-step API, JIT warmup, checkpoints, config serialization, and feature diagnostics
 - `MultiHeadMLPLearner` linear baseline support (`hidden_sizes=()`)
 - Feature relevance diagnostics (`compute_feature_relevance`, `compute_feature_sensitivity`, `relevance_to_dict`) for periodic daemon reporting
 
