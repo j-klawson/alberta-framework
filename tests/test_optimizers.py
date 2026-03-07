@@ -344,6 +344,152 @@ class TestObGD:
         chex.assert_tree_all_finite(result.bias_delta)
 
 
+class TestIDBDParamState:
+    """Tests for the IDBD per-parameter state (MLP path, Meyer adaptation)."""
+
+    def test_init_for_shape_2d(self):
+        """init_for_shape should create correct shapes for 2D weight matrix."""
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.001)
+        state = optimizer.init_for_shape((32, 10))
+
+        chex.assert_shape(state.log_step_sizes, (32, 10))
+        chex.assert_shape(state.traces, (32, 10))
+        chex.assert_trees_all_close(
+            jnp.exp(state.log_step_sizes), jnp.full((32, 10), 0.01)
+        )
+        chex.assert_trees_all_close(state.traces, jnp.zeros((32, 10)))
+        assert state.meta_step_size == pytest.approx(0.001)
+
+    def test_init_for_shape_1d(self):
+        """init_for_shape should create correct shapes for 1D bias vector."""
+        optimizer = IDBD(initial_step_size=0.05)
+        state = optimizer.init_for_shape((16,))
+
+        chex.assert_shape(state.log_step_sizes, (16,))
+        chex.assert_shape(state.traces, (16,))
+        chex.assert_trees_all_close(
+            jnp.exp(state.log_step_sizes), jnp.full(16, 0.05)
+        )
+
+    def test_update_from_gradient_shapes(self):
+        """update_from_gradient should return correct shapes and finite values."""
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.01)
+        state = optimizer.init_for_shape((32, 10))
+
+        gradient = jnp.ones((32, 10)) * 0.1
+        error = jnp.array(1.0)
+
+        step, new_state = optimizer.update_from_gradient(state, gradient, error=error)
+
+        chex.assert_shape(step, (32, 10))
+        chex.assert_shape(new_state.log_step_sizes, (32, 10))
+        chex.assert_shape(new_state.traces, (32, 10))
+        chex.assert_tree_all_finite(step)
+        chex.assert_tree_all_finite(new_state.log_step_sizes)
+        chex.assert_tree_all_finite(new_state.traces)
+
+    def test_update_from_gradient_without_error(self):
+        """update_from_gradient should work without error (trunk path)."""
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.01)
+        state = optimizer.init_for_shape((16, 8))
+
+        gradient = jnp.ones((16, 8)) * 0.1
+
+        step, new_state = optimizer.update_from_gradient(state, gradient, error=None)
+
+        chex.assert_shape(step, (16, 8))
+        chex.assert_tree_all_finite(step)
+        chex.assert_tree_all_finite(new_state.log_step_sizes)
+
+    def test_h_trace_uses_loss_gradient_direction(self):
+        """h-trace should accumulate in loss gradient direction (-error * z)."""
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.01)
+        state = optimizer.init_for_shape((5,))
+
+        z = jnp.ones(5)
+        error = jnp.array(2.0)
+
+        _, new_state = optimizer.update_from_gradient(state, z, error=error)
+
+        # h should be alpha * (-error * z) = -0.01 * 2.0 * 1.0 = -0.02
+        expected_h = -0.01 * 2.0 * jnp.ones(5)
+        chex.assert_trees_all_close(new_state.traces, expected_h, atol=1e-6)
+
+    def test_meta_update_uses_prediction_grads_only(self):
+        """Meta-update should use z * h (no error), matching Meyer."""
+        optimizer = IDBD(initial_step_size=0.1, meta_step_size=0.1)
+        state = optimizer.init_for_shape((3,))
+
+        z = jnp.ones(3)
+        error = jnp.array(1.0)
+
+        # Step 1: h starts at 0, so no meta-update
+        _, state = optimizer.update_from_gradient(state, z, error=error)
+        log_alpha_after_1 = state.log_step_sizes
+
+        # Step 2: h = -alpha * error * z < 0, meta = z * h < 0
+        # With negative h, meta-gradient z * h < 0 -> step-size decreases
+        _, state = optimizer.update_from_gradient(state, z, error=error)
+        log_alpha_after_2 = state.log_step_sizes
+
+        # Step-sizes should decrease (meta-gradient is negative)
+        assert jnp.all(log_alpha_after_2 < log_alpha_after_1)
+
+    def test_loss_grads_mode(self):
+        """loss_grads h_decay_mode should produce finite results."""
+        optimizer = IDBD(
+            initial_step_size=0.01, meta_step_size=0.01, h_decay_mode="loss_grads"
+        )
+        state = optimizer.init_for_shape((8, 4))
+
+        gradient = jnp.ones((8, 4)) * 0.1
+        error = jnp.array(2.0)
+
+        step, new_state = optimizer.update_from_gradient(state, gradient, error=error)
+
+        chex.assert_tree_all_finite(step)
+        chex.assert_tree_all_finite(new_state.log_step_sizes)
+
+    def test_invalid_h_decay_mode_raises(self):
+        """Invalid h_decay_mode should raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid h_decay_mode"):
+            IDBD(h_decay_mode="invalid")
+
+    def test_vmap_compatible(self):
+        """update_from_gradient should work with jax.vmap."""
+        import jax
+
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.01)
+
+        state = optimizer.init_for_shape((8, 4))
+        batched_state = jax.tree.map(lambda x: jnp.stack([x, x, x]), state)
+
+        gradient = jnp.ones((3, 8, 4)) * 0.1
+        error = jnp.ones(3)
+
+        def single_update(s, g, e):
+            return optimizer.update_from_gradient(s, g, error=e)
+
+        batched_step, batched_new_state = jax.vmap(single_update)(
+            batched_state, gradient, error
+        )
+
+        chex.assert_shape(batched_step, (3, 8, 4))
+        chex.assert_tree_all_finite(batched_step)
+
+    def test_to_config_default_mode(self):
+        """to_config should omit h_decay_mode when default."""
+        optimizer = IDBD(initial_step_size=0.01, meta_step_size=0.01)
+        config = optimizer.to_config()
+        assert "h_decay_mode" not in config
+
+    def test_to_config_non_default_mode(self):
+        """to_config should include h_decay_mode when non-default."""
+        optimizer = IDBD(h_decay_mode="loss_grads")
+        config = optimizer.to_config()
+        assert config["h_decay_mode"] == "loss_grads"
+
+
 class TestOptimizerComparison:
     """Integration tests comparing LMS, IDBD, and Autostep behavior."""
 

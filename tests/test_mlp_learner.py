@@ -8,6 +8,7 @@ import jax.random as jr
 import pytest
 
 from alberta_framework import (
+    IDBD,
     AGCBounding,
     Autostep,
     BatchedMLPResult,
@@ -928,3 +929,143 @@ class TestHybridOptimizer:
         assert isinstance(result, BatchedMLPResult)
         chex.assert_shape(result.metrics, (3, 50, 3))
         chex.assert_tree_all_finite(result.metrics)
+
+
+class TestMLPLearnerWithIDBD:
+    """Tests for MLPLearner with IDBD optimizer (Meyer MLP adaptation)."""
+
+    def test_init_creates_idbd_param_states(self):
+        """Init should create IDBDParamState for each parameter."""
+        from alberta_framework.core.types import IDBDParamState
+
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        for opt_state in state.optimizer_states:
+            assert isinstance(opt_state, IDBDParamState)
+
+    def test_basic_update_runs(self):
+        """Basic update with IDBD optimizer should run without error."""
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        obs = jnp.ones(5)
+        target = jnp.array([1.0])
+
+        result = learner.update(state, obs, target)
+        chex.assert_shape(result.prediction, (1,))
+        chex.assert_shape(result.error, (1,))
+        chex.assert_shape(result.metrics, (3,))
+        chex.assert_tree_all_finite(result.metrics)
+
+    def test_learning_loop_produces_finite_metrics(self):
+        """Learning loop with IDBD should produce finite metrics."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+
+        chex.assert_shape(metrics, (100, 3))
+        chex.assert_tree_all_finite(metrics)
+        assert int(state.step_count) == 100
+
+    def test_loss_grads_mode(self):
+        """IDBD with loss_grads h_decay_mode should work with MLP."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(
+                initial_step_size=0.01,
+                meta_step_size=0.01,
+                h_decay_mode="loss_grads",
+            ),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+
+        chex.assert_shape(metrics, (100, 3))
+        chex.assert_tree_all_finite(metrics)
+
+    def test_hybrid_lms_trunk_idbd_head(self):
+        """Hybrid LMS trunk + IDBD head should work."""
+        from alberta_framework.core.types import IDBDParamState, LMSState
+
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            step_size=1.0,
+            head_optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+        state = learner.init(feature_dim=5, key=jr.key(42))
+
+        # Trunk: LMS, Head: IDBD
+        assert isinstance(state.optimizer_states[0], LMSState)
+        assert isinstance(state.optimizer_states[1], LMSState)
+        assert isinstance(state.optimizer_states[2], IDBDParamState)
+        assert isinstance(state.optimizer_states[3], IDBDParamState)
+
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=50, key=jr.key(42)
+        )
+        chex.assert_shape(metrics, (50, 3))
+        chex.assert_tree_all_finite(metrics)
+
+    def test_batched_learning_loop(self):
+        """Batched loop should work with IDBD."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+        )
+
+        keys = jr.split(jr.key(42), 3)
+        result = run_mlp_learning_loop_batched(
+            learner, stream, num_steps=50, keys=keys
+        )
+
+        assert isinstance(result, BatchedMLPResult)
+        chex.assert_shape(result.metrics, (3, 50, 3))
+        chex.assert_tree_all_finite(result.metrics)
+
+    def test_with_normalizer(self):
+        """IDBD + EMANormalizer should work together."""
+        stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
+        learner = MLPLearner(
+            hidden_sizes=(16,),
+            sparsity=0.0,
+            optimizer=IDBD(initial_step_size=0.01, meta_step_size=0.01),
+            bounder=ObGDBounding(kappa=2.0),
+            normalizer=EMANormalizer(decay=0.99),
+        )
+
+        state, metrics = run_mlp_learning_loop(
+            learner, stream, num_steps=100, key=jr.key(42)
+        )
+
+        chex.assert_shape(metrics, (100, 4))
+        chex.assert_tree_all_finite(metrics)

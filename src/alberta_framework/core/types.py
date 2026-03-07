@@ -104,6 +104,32 @@ class AutostepState:
 
 
 @chex.dataclass(frozen=True)
+class IDBDParamState:
+    """Per-parameter IDBD state for use with arbitrary-shape parameters.
+
+    Used by ``IDBD.init_for_shape`` / ``IDBD.update_from_gradient``
+    for MLP (or other multi-parameter) learners. Unlike ``IDBDState``,
+    this type has no bias-specific fields -- each parameter (weight matrix,
+    bias vector) gets its own ``IDBDParamState``.
+
+    Implements Meyer's adaptation of IDBD for nonlinear models: replaces
+    ``x^2`` in the h-decay term with ``(dy/dw)^2`` (squared prediction
+    gradients), which generalizes IDBD to arbitrary architectures.
+
+    Reference: Meyer, https://github.com/ejmejm/phd_research
+
+    Attributes:
+        log_step_sizes: Log of per-element step-sizes, same shape as the parameter
+        traces: Per-element h traces for gradient correlation
+        meta_step_size: Meta learning rate beta
+    """
+
+    log_step_sizes: Array  # same shape as the parameter
+    traces: Array  # same shape as the parameter
+    meta_step_size: Float[Array, ""]
+
+
+@chex.dataclass(frozen=True)
 class AutostepParamState:
     """Per-parameter Autostep state for use with arbitrary-shape parameters.
 
@@ -330,7 +356,7 @@ class MLPLearnerState:
     """
 
     params: MLPParams
-    optimizer_states: tuple[LMSState | AutostepState | AutostepParamState, ...]
+    optimizer_states: tuple[LMSState | AutostepState | AutostepParamState | IDBDParamState, ...]
     traces: tuple[Array, ...]
     normalizer_state: AnyNormalizerState | None = None
     step_count: Int[Array, ""] = None  # type: ignore[assignment]

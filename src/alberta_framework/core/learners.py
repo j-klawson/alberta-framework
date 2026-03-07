@@ -34,6 +34,7 @@ from alberta_framework.core.types import (
     AutoTDIDBDState,
     BatchedLearningResult,
     BatchedMLPResult,
+    IDBDParamState,
     IDBDState,
     LearnerState,
     LMSState,
@@ -63,6 +64,7 @@ AnyOptimizer = (
     | Optimizer[AutostepState]
     | Optimizer[ObGDState]
     | Optimizer[AutostepParamState]
+    | Optimizer[IDBDParamState]
 )
 
 # Type alias for any TD optimizer type

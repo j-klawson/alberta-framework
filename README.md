@@ -155,7 +155,7 @@ mlp_agc = MLPLearner(
 
 **Supervised Learning:**
 - **LMS**: Fixed step-size baseline
-- **IDBD**: Per-weight adaptive step-sizes via gradient correlation (Sutton, 1992)
+- **IDBD**: Per-weight adaptive step-sizes via gradient correlation (Sutton, 1992). MLP support via Meyer's adaptation — replaces `x²` with `(∂y/∂w)²` in the h-decay term ([Meyer](https://github.com/ejmejm/phd_research/blob/main/phd/jax_core/optimizers/idbd.py))
 - **Autostep**: Tuning-free adaptation with gradient normalization (Mahmood et al., 2012)
 
 **TD Learning:**
@@ -281,6 +281,14 @@ If you use this framework in your research, please cite:
   author = {Sutton, Richard S.},
   booktitle = {Proceedings of the AAAI Conference on Artificial Intelligence},
   year = {1992}
+}
+
+@software{meyer2025idbdmlp,
+  title = {IDBD for MLPs: Adapting Per-Weight Step-Sizes in Deep Networks},
+  author = {Meyer, Edan},
+  year = {2025},
+  url = {https://github.com/ejmejm/phd_research/blob/main/phd/jax_core/optimizers/idbd.py},
+  note = {Generalizes Sutton 1992 IDBD to nonlinear models by replacing x² with (∂y/∂w)² in the h-decay term}
 }
 
 @inproceedings{mahmood2012autostep,

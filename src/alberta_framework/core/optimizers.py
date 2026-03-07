@@ -25,6 +25,7 @@ from alberta_framework.core.types import (
     AutostepParamState,
     AutostepState,
     AutoTDIDBDState,
+    IDBDParamState,
     IDBDState,
     LMSState,
     ObGDState,
@@ -224,11 +225,16 @@ class OptimizerUpdate:
 
     weight_delta: Float[Array, " feature_dim"]
     bias_delta: Float[Array, ""]
-    new_state: LMSState | IDBDState | AutostepState | ObGDState
+    new_state: LMSState | IDBDState | AutostepState | ObGDState | IDBDParamState
     metrics: dict[str, Array]
 
 
-class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, AutostepParamState)](ABC):
+class Optimizer[
+    StateT: (
+        LMSState, IDBDState, AutostepState, ObGDState,
+        AutostepParamState, IDBDParamState,
+    )
+](ABC):
     """Base class for optimizers."""
 
     @abstractmethod
@@ -288,7 +294,7 @@ class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, Autostep
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support init_for_shape. "
-            "Only LMS and Autostep currently implement this."
+            "Only LMS, IDBD, and Autostep currently implement this."
         )
 
     def update_from_gradient(
@@ -318,7 +324,7 @@ class Optimizer[StateT: (LMSState, IDBDState, AutostepState, ObGDState, Autostep
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support update_from_gradient. "
-            "Only LMS and Autostep currently implement this."
+            "Only LMS, IDBD, and Autostep currently implement this."
         )
 
 
@@ -438,23 +444,44 @@ class IDBD(Optimizer[IDBDState]):
         self,
         initial_step_size: float = 0.01,
         meta_step_size: float = 0.01,
+        h_decay_mode: str = "prediction_grads",
     ):
         """Initialize IDBD optimizer.
 
         Args:
             initial_step_size: Initial value for per-weight step-sizes
             meta_step_size: Meta learning rate beta for adapting step-sizes
+            h_decay_mode: Mode for computing the h-decay term in MLP path.
+                ``"prediction_grads"``: h_decay = z^2 (squared prediction
+                gradients). This is the principled generalization — for
+                linear models, z = x so z^2 = x^2, recovering Sutton 1992.
+                ``"loss_grads"``: h_decay = (error * z)^2 (Fisher
+                approximation of the Hessian diagonal).
+                Only affects the MLP path (``update_from_gradient``);
+                the linear ``update()`` method always uses x^2.
+
+        Raises:
+            ValueError: If ``h_decay_mode`` is not one of the valid modes
         """
+        if h_decay_mode not in ("prediction_grads", "loss_grads"):
+            raise ValueError(
+                f"Invalid h_decay_mode: {h_decay_mode!r}. "
+                "Must be 'prediction_grads' or 'loss_grads'."
+            )
         self._initial_step_size = initial_step_size
         self._meta_step_size = meta_step_size
+        self._h_decay_mode = h_decay_mode
 
     def to_config(self) -> dict[str, Any]:
         """Serialize configuration to dict."""
-        return {
+        config: dict[str, Any] = {
             "type": "IDBD",
             "initial_step_size": self._initial_step_size,
             "meta_step_size": self._meta_step_size,
         }
+        if self._h_decay_mode != "prediction_grads":
+            config["h_decay_mode"] = self._h_decay_mode
+        return config
 
     def init(self, feature_dim: int) -> IDBDState:
         """Initialize IDBD state.
@@ -474,6 +501,114 @@ class IDBD(Optimizer[IDBDState]):
             bias_step_size=jnp.array(self._initial_step_size, dtype=jnp.float32),
             bias_trace=jnp.array(0.0, dtype=jnp.float32),
         )
+
+    def init_for_shape(self, shape: tuple[int, ...]) -> IDBDParamState:
+        """Initialize IDBD state for arbitrary-shape parameters.
+
+        Args:
+            shape: Shape of the parameter array
+
+        Returns:
+            IDBDParamState with arrays matching the given shape
+        """
+        return IDBDParamState(
+            log_step_sizes=jnp.full(
+                shape, jnp.log(self._initial_step_size), dtype=jnp.float32
+            ),
+            traces=jnp.zeros(shape, dtype=jnp.float32),
+            meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
+        )
+
+    def update_from_gradient(
+        self,
+        state: IDBDParamState,
+        gradient: Array,
+        error: Array | None = None,
+    ) -> tuple[Array, IDBDParamState]:
+        """Compute IDBD update from pre-computed gradient (MLP path).
+
+        Implements Meyer's adaptation of IDBD to nonlinear models. The key
+        insight: replace ``x^2`` in the h-decay term with ``(dy/dw)^2``
+        (squared prediction gradients), which generalizes IDBD to arbitrary
+        architectures.
+
+        This follows Meyer's implementation, which differs from the linear
+        IDBD (Sutton 1992) in two ways to better handle deep networks:
+
+        1. The meta-update uses ``z * h`` (prediction gradient times trace)
+           without the current error, rather than ``error * z * h``.
+        2. The h-trace accumulates loss gradients (``-error * z``) rather
+           than error-scaled prediction gradients (``error * z``).
+
+        These changes address problems with IDBD in deep networks where
+        the step-size being factored into both h and beta updates causes
+        compounding effects.
+
+        Reference: Meyer, https://github.com/ejmejm/phd_research
+
+        Operation order (meta-update first, then new alpha for trace):
+
+        1. Compute h_decay based on mode: ``z^2`` or ``(error * z)^2``
+        2. Meta-update with OLD traces: ``log_alpha += beta * z * h``
+        3. Clip log step-sizes to ``[-10.0, 2.0]``
+        4. New step-sizes: ``alpha = exp(log_alpha)``
+        5. Step: ``alpha * z`` (error applied externally by caller)
+        6. Trace update: ``h = h * max(0, 1 - alpha * h_decay) + alpha * g``
+           where ``g = -error * z`` (loss gradient direction)
+
+        When ``error`` is None (trunk path in multi-head), the gradient
+        is already in loss gradient direction (accumulated cotangents),
+        so the trace uses ``alpha * z`` directly.
+
+        Args:
+            state: Current IDBD param state
+            gradient: Pre-computed prediction gradient / eligibility trace
+                (same shape as state arrays)
+            error: Optional prediction error scalar. When provided,
+                used for h_decay (loss_grads mode) and h-trace sign.
+
+        Returns:
+            ``(step, new_state)`` where step has the same shape as gradient
+        """
+        beta = state.meta_step_size
+        z = gradient
+
+        # 1. Compute h_decay based on mode
+        if self._h_decay_mode == "loss_grads" and error is not None:
+            h_decay = (jnp.squeeze(error) * z) ** 2
+        else:
+            # prediction_grads mode, or loss_grads without error
+            h_decay = z**2
+
+        # 2. Meta-update with OLD traces (Meyer: prediction_grads * h, no error)
+        meta_gradient = z * state.traces
+        new_log_step_sizes = state.log_step_sizes + beta * meta_gradient
+
+        # 3. Clip log step-sizes
+        new_log_step_sizes = jnp.clip(new_log_step_sizes, -10.0, 2.0)
+
+        # 4. New step-sizes
+        new_alphas = jnp.exp(new_log_step_sizes)
+
+        # 5. Step: alpha * z (error applied externally)
+        step = new_alphas * z
+
+        # 6. Trace update: h = h * decay + alpha * loss_grads
+        # Meyer uses loss_grads = -error * z when error is available;
+        # when error is None (trunk path), z is already loss gradient direction.
+        decay = jnp.maximum(0.0, 1.0 - new_alphas * h_decay)
+        if error is not None:
+            new_traces = state.traces * decay - new_alphas * jnp.squeeze(error) * z
+        else:
+            new_traces = state.traces * decay + new_alphas * z
+
+        new_state = IDBDParamState(
+            log_step_sizes=new_log_step_sizes,
+            traces=new_traces,
+            meta_step_size=beta,
+        )
+
+        return step, new_state
 
     def update(
         self,

@@ -41,6 +41,7 @@ from alberta_framework.core.optimizers import (
 from alberta_framework.core.types import (
     AutostepParamState,
     AutostepState,
+    IDBDParamState,
     IDBDState,
     LMSState,
     MLPParams,
@@ -48,7 +49,9 @@ from alberta_framework.core.types import (
 )
 
 
-def _extract_mean_step_size(opt_state: LMSState | AutostepParamState) -> Array:
+def _extract_mean_step_size(
+    opt_state: LMSState | AutostepParamState | IDBDParamState,
+) -> Array:
     """Extract mean step-size from an optimizer state.
 
     Works at JAX trace time since it dispatches on Python-level attributes.
@@ -56,6 +59,9 @@ def _extract_mean_step_size(opt_state: LMSState | AutostepParamState) -> Array:
     if hasattr(opt_state, "step_sizes"):
         # AutostepParamState
         return jnp.mean(opt_state.step_sizes)
+    if hasattr(opt_state, "log_step_sizes"):
+        # IDBDParamState
+        return jnp.mean(jnp.exp(opt_state.log_step_sizes))
     if hasattr(opt_state, "step_size"):
         # LMSState
         return opt_state.step_size
@@ -95,7 +101,9 @@ class MultiHeadMLPState:
 
     trunk_params: MLPParams
     head_params: MLPParams
-    trunk_optimizer_states: tuple[LMSState | AutostepState | AutostepParamState, ...]
+    trunk_optimizer_states: tuple[
+        LMSState | AutostepState | AutostepParamState | IDBDParamState, ...
+    ]
     head_optimizer_states: tuple[Any, ...]  # tuple of (w_opt, b_opt) tuples
     trunk_traces: tuple[Array, ...]
     head_traces: tuple[Any, ...]  # tuple of (w_trace, b_trace) tuples
@@ -164,6 +172,7 @@ AnyOptimizer = (
     | Optimizer[AutostepState]
     | Optimizer[ObGDState]
     | Optimizer[AutostepParamState]
+    | Optimizer[IDBDParamState]
 )
 
 
