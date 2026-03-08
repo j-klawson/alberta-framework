@@ -18,6 +18,39 @@ Immediate next steps and near-term work items for the Alberta Framework.
 - [ ] Horde architecture: many GVFs learning in parallel via MultiHeadMLPLearner
 - [ ] Integration with ObGD bounding for stable GVF learning
 
+## Step 4a — SARSA (On-Policy TD Control)
+
+First control algorithm. Enables rlsecd to take actions in security-gym's action space.
+
+### Core Types
+- [ ] `SARSATimeStep` in `core/types.py` — extends `TDTimeStep` with `action: int` and `next_action: int`
+- [ ] `SARSAUpdate` result type — includes `td_error`, `action_taken`, `q_values` for diagnostics
+
+### SARSAAgent
+- [ ] `SARSAAgent` class in `core/sarsa.py` (or `core/control.py`)
+  - Wraps `MultiHeadMLPLearner` (n_heads = n_actions)
+  - `select_action(state, obs, key) -> action` — ε-greedy over Q-values from all heads
+  - `sarsa_update(state, obs, action, reward, next_obs, next_action, gamma) -> (state, metrics)` — SARSA target computation + head update via NaN masking
+  - Configurable: `epsilon` (exploration rate), `epsilon_decay` (optional schedule), `epsilon_min`
+  - All existing composable components: Optimizer + Bounder + Normalizer
+- [ ] SARSA(λ) variant with eligibility traces per action-head
+
+### Learning Loops
+- [ ] `run_sarsa_episode(agent, env, state, key) -> (state, metrics)` — single episode gymnasium loop
+- [ ] `run_sarsa_continuing(agent, env, state, key, num_steps) -> (state, metrics)` — continuing (non-episodic) loop for streaming environments
+- [ ] Scan-compatible step function for JIT compilation
+
+### Testing
+- [ ] Unit tests: SARSA update rule correctness (known MDP with hand-computed Q-values)
+- [ ] On-policy vs off-policy: verify SARSA learns different Q-values than Q-learning under ε-greedy
+- [ ] Trace test: SARSA(λ=0) matches one-step SARSA
+- [ ] bsuite catch/cartpole comparison: SARSA agent alongside existing DQN agents
+- [ ] Integration: `SARSAAgent` with Autostep + ObGD + EMA (the winning rlsecd combo)
+
+### Downstream Integration (rlsecd)
+- [ ] Validate SARSAAgent works with 12-dim obs × 6-action security-gym space
+- [ ] Benchmark throughput: SARSA predict+update must sustain >1000 evt/s on CPU (rlsecd requirement)
+
 ## rlsecd Integration
 
 - [x] AF-1: Checkpoint utilities — `save_checkpoint`/`load_checkpoint` + `to_config()`/`from_config()` (rlsecd needs to consume)

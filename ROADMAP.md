@@ -61,7 +61,33 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 
 ## Step 4: Control — Planned
 
-**Goal**: Introduce action selection. Move from prediction-only agents to actor-critic control.
+**Goal**: Introduce action selection. Move from prediction-only agents to on-policy TD control, then actor-critic.
+
+### Step 4a: SARSA — On-Policy TD Control
+
+**Goal**: Implement SARSA as the first control algorithm. On-policy learning is safer for deployed agents (learns value of the policy it follows, not an optimistic off-policy target). Enables rlsecd to transition from passive prediction to active defense via security-gym's action space.
+
+**Key components**:
+- `SARSATimeStep` type extending `TDTimeStep` with `action` (int) and `next_action` (int) fields
+- SARSA update rule: `Q(s,a) ← Q(s,a) + α[r + γQ(s',a') - Q(s,a)]` where `a'` is the *actually taken* next action
+- `SARSAAgent` wrapping `MultiHeadMLPLearner` (n_heads = n_actions) with:
+  - ε-greedy action selection (configurable ε, optional decay schedule)
+  - SARSA target computation (on-policy, vs Q-learning's `max_a'` off-policy target)
+  - Per-action head updates via existing NaN-masking mechanism
+- SARSA(λ) with eligibility traces for faster credit assignment
+- Integration with all existing composable components (Optimizer, Bounder, Normalizer)
+- Gymnasium control loop: `obs → select_action → env.step(action) → reward → update`
+
+**Relationship to existing Q-learning agents**:
+The bsuite DQN agents (`benchmarks/bsuite/agents/`) already do off-policy Q-learning with `MultiHeadMLPLearner`. SARSA shares the same per-head update mechanism but differs in target computation (`Q(s',a')` vs `max Q(s',·)`). The `SARSAAgent` should be a core framework component (not benchmark-only) since rlsecd will depend on it.
+
+**Downstream: rlsecd integration**:
+- rlsecd gains `--gym-control` mode using `gym.make("SecurityLogStream-v1")`
+- Maps 6 discrete security-gym actions (pass/alert/throttle/block/unblock/isolate) to SARSA heads
+- Reward comes from security-gym's asymmetric reward function (penalizes blocking benign, rewards blocking attacks)
+- Generates (state, action, reward, outcome) experience for autoresearch LLM oracle training pipeline
+
+### Step 4b: Actor-Critic — Planned
 
 **Key components**:
 - Stream AC(lambda): Actor-critic with eligibility traces
