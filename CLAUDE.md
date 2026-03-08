@@ -108,6 +108,8 @@ Fixed step-size baseline: `w_i += alpha * error * x_i`. Simple but requires manu
 ### IDBD (Incremental Delta-Bar-Delta) — Sutton 1992
 Per-weight adaptive step-sizes via gradient correlation. Operation order: meta-update first (using OLD traces), then NEW alpha for weight and trace updates. See `core/optimizers.py` for full pseudocode.
 
+**MLP Support (IDBD-MLP) — Meyer**: IDBD supports MLPs via `init_for_shape()` and `update_from_gradient()` using `IDBDParamState`. The core insight (Meyer): replace `x^2` in the h-decay term with `(dy/dw)^2` (squared prediction gradients), generalizing IDBD to arbitrary architectures. Two `h_decay_mode` options: `"prediction_grads"` (default) and `"loss_grads"` (Fisher approx). The MLP path intentionally differs from linear IDBD: meta-update uses `z * h` (no error), h-trace accumulates loss gradient direction (`-error * z`). Reference: [Meyer](https://github.com/ejmejm/phd_research/blob/main/phd/jax_core/optimizers/idbd.py)
+
 ### Autostep — Mahmood et al. 2012
 Per-weight adaptive step-sizes with self-regulated normalizers (`v_i` tracks meta-gradient `|delta*x*h|`) and overshoot prevention (`M = max(sum(alpha_i*x_i^2), 1)`). Key: `tau` is a time constant (default 10000), `v_i`/`h_i` init to 0. See `core/optimizers.py` for full pseudocode.
 

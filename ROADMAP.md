@@ -40,9 +40,9 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Daemon usage guide (`docs/guide/daemon-usage.md`) covering single-step API, JIT warmup, checkpoints, config serialization, and feature diagnostics
 - `MultiHeadMLPLearner` linear baseline support (`hidden_sizes=()`)
 - Feature relevance diagnostics (`compute_feature_relevance`, `compute_feature_sensitivity`, `relevance_to_dict`) for periodic daemon reporting
+- IDBD-MLP optimizer (Meyer): per-parameter adaptive step-sizes for MLPs via `IDBDParamState`, with `h_decay_mode` (`prediction_grads`/`loss_grads`)
 
 **Planned**:
-- IDBD-MLP optimizer (blocked on Edan Meyer permission)
 - Neuron utility tracking (per-hidden-unit EMA of gradient magnitude)
 - Feature generation and testing ("generate and test" mechanisms)
 - Nonlinear feature discovery for streaming problems
@@ -96,3 +96,4 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Sutton, R.S., et al. (2022). "The Alberta Plan for AI Research"
 - Elsayed, M., Lan, Q., Lyle, C., & Mahmood, A.R. (2024). "Streaming Deep Reinforcement Learning Finally Works"
 - Brock, A., De, S., Smith, S.L., & Simonyan, K. (2021). "High-Performance Large-Scale Image Recognition Without Normalization"
+- Meyer, E. (2025). "IDBD for MLPs" — https://github.com/ejmejm/phd_research/blob/main/phd/jax_core/optimizers/idbd.py

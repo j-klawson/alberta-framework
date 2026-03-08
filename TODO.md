@@ -23,8 +23,9 @@ Immediate next steps and near-term work items for the Alberta Framework.
 - [x] AF-1: Checkpoint utilities — `save_checkpoint`/`load_checkpoint` + `to_config()`/`from_config()` (rlsecd needs to consume)
 - [x] AF-3: Document single-step learner API for daemon use (`docs/guide/daemon-usage.md`)
 - [x] AF-4: JIT-compile `predict()`/`update()` on MLPLearner and MultiHeadMLPLearner (upstream)
-- [ ] AF-2: Get permission from Edan Meyer to publish IDBD-MLP
-- [ ] AF-2: IDBD-MLP 100k-event replay test in rlsecd (post permission + implementation)
+- [x] AF-2: Get permission from Edan Meyer to publish IDBD-MLP
+- [x] AF-2: Merge IDBD-MLP into main (Meyer adaptation with IDBDParamState, 18 tests)
+- [ ] AF-2: IDBD-MLP 100k-event replay test in rlsecd
 - [ ] AF-2: IDBD-MLP full 1.6M log stability test
 - [ ] Simplify rlsecd SecurityAgent to use framework checkpoint utilities
 - [ ] Simplify rlsecd SecurityAgent to use framework config serialization
