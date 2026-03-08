@@ -4,7 +4,7 @@ A research-first framework for the Alberta Plan: Building the foundations of Con
 
 ## Project Overview
 
-Implements the Alberta Plan for AI Research, progressing through increasingly complex continual learning settings. Step 1 (complete): IDBD/Autostep beat hand-tuned LMS. Step 2 (in progress): nonlinear function approximation with MLP and ObGD.
+Implements the Alberta Plan for AI Research, progressing through increasingly complex continual learning settings. Step 1 (complete): IDBD/Autostep beat hand-tuned LMS. Step 2 (substantial): nonlinear function approximation with MLP, ObGD, and IDBD-MLP. Step 3 (next): GVF prediction and Horde architecture.
 
 **Core Philosophy**: Temporal uniformity — every component updates at every time step.
 
@@ -126,7 +126,10 @@ Per-unit gradient clipping scaled by weight norm. Fine-grained unlike ObGD's glo
 `Input -> [Dense -> LayerNorm -> LeakyReLU] x N -> Dense(1)`. Sparse init (90%), composable optimizer/bounder/normalizer, optional `head_optimizer` for trunk/head split. Toggleable `use_layer_norm`.
 
 ### MultiHeadMLPLearner
-Shared trunk, N independent heads. VJP with accumulated cotangents. NaN targets mask inactive heads. Same composability as MLPLearner. Supports `hidden_sizes=()` for linear baseline.
+Shared trunk, N independent heads. VJP with accumulated cotangents. NaN targets mask inactive heads. Same composability as MLPLearner. Supports `hidden_sizes=()` for linear baseline. Serves as the foundation for the Horde architecture (Step 3) — each head is a GVF demon.
+
+### GVF / Horde (Step 3 — Next)
+General Value Functions (Sutton et al. 2011) represent knowledge as value functions with four question functions: policy π, pseudo-termination γ, pseudo-reward r (cumulant), and pseudo-terminal-reward z. A **prediction demon** has a fixed π; a **control demon** has π = greedy(q̂). The Horde is many demons learning in parallel — `MultiHeadMLPLearner` is the proto-Horde. rlsecd's 5 heads are implicit prediction demons (γ=0, π=behavior). Step 3 formalizes this with `GVFSpec` types and adds TD(λ) eligibility traces for MLP. Step 4 (SARSA) then adds a control demon to the Horde.
 
 ### Key Features (brief)
 - **Single-step API**: `predict()`/`update()` with unbatched 1D obs for daemon use, JIT-compiled automatically (see `docs/guide/daemon-usage.md`)
