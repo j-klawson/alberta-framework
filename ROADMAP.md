@@ -116,6 +116,10 @@ rlsecd's current 5 heads become proper GVF demons:
 
 Step 3 extends these to temporal predictions (γ > 0): "will this session become malicious in the next N events?" Then Step 4 adds a control demon that takes defensive actions.
 
+### Decision Point: Discounted vs Average Reward
+
+When implementing temporal GVF predictions (γ > 0), we need to decide whether to use discounted reward, average reward, or both. The Alberta group argues that discounted reward is "a hack" — the discount factor γ conflates two distinct roles (prediction horizon and value weighting), and average-reward formulations are more natural for continuing, non-episodic agents. The Alberta Plan explicitly calls for average-reward methods in Steps 5–6, so building on discounted reward first may create technical debt. On the other hand, discounted reward is simpler to implement initially and has more established tooling (e.g., standard TD(λ), SARSA). Decide before committing to the Phase 2/3 TD target computation.
+
 ## Step 4: Control — Planned
 
 **Goal**: Introduce action selection. Move from prediction-only agents to control using the GVF/Horde infrastructure from Step 3. A control demon is a GVF where π = greedy(q̂) — prediction and control are the same mechanism (Sutton et al. 2011, §4).
