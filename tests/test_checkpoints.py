@@ -1,11 +1,8 @@
 """Tests for checkpoint save/load utilities."""
 
-import json
-
 import chex
 import jax.numpy as jnp
 import jax.random as jr
-import numpy as np
 import pytest
 
 from alberta_framework import (
@@ -15,7 +12,9 @@ from alberta_framework import (
     MLPLearner,
     MultiHeadMLPLearner,
     ObGDBounding,
+    checkpoint_exists,
     load_checkpoint,
+    load_checkpoint_metadata,
     save_checkpoint,
 )
 
@@ -185,45 +184,36 @@ class TestMetadata:
 
         assert loaded_meta == {}
 
-    def test_format_version_in_json(self, tmp_path):
-        """JSON should contain format_version."""
+    def test_checkpoint_directory_created(self, tmp_path):
+        """Checkpoint should be saved as a directory with state/ subdirectory."""
         learner = LinearLearner()
         state = learner.init(feature_dim=5)
 
-        save_checkpoint(state, tmp_path / "version")
+        save_checkpoint(state, tmp_path / "dircheck")
 
-        with open(tmp_path / "version.json") as f:
-            data = json.load(f)
-
-        assert data["format_version"] == 1
-        assert "leaf_count" in data
-        assert "leaves" in data
+        assert (tmp_path / "dircheck").is_dir()
+        assert (tmp_path / "dircheck" / "state").is_dir()
+        assert (tmp_path / "dircheck" / "metadata").is_dir()
 
 
 class TestErrorHandling:
     """Tests for error handling."""
 
-    def test_missing_npz_file(self, tmp_path):
-        """Should raise FileNotFoundError for missing .npz."""
+    def test_missing_checkpoint(self, tmp_path):
+        """Should raise FileNotFoundError for missing checkpoint."""
         learner = LinearLearner()
         state = learner.init(feature_dim=5)
 
-        with pytest.raises(FileNotFoundError, match="array file"):
+        with pytest.raises(FileNotFoundError, match="not found"):
             load_checkpoint(state, tmp_path / "nonexistent")
 
-    def test_missing_json_file(self, tmp_path):
-        """Should raise FileNotFoundError for missing .json."""
-        learner = LinearLearner()
-        state = learner.init(feature_dim=5)
+    def test_missing_checkpoint_metadata_only(self, tmp_path):
+        """Should raise FileNotFoundError for metadata-only load too."""
+        with pytest.raises(FileNotFoundError, match="not found"):
+            load_checkpoint_metadata(tmp_path / "nonexistent")
 
-        # Create only the npz file
-        np.savez(tmp_path / "partial.npz", leaf_0=np.zeros(5))
-
-        with pytest.raises(FileNotFoundError, match="metadata file"):
-            load_checkpoint(state, tmp_path / "partial")
-
-    def test_leaf_count_mismatch(self, tmp_path):
-        """Should raise ValueError when template has different leaf count."""
+    def test_structure_mismatch(self, tmp_path):
+        """Should raise ValueError when template has different structure."""
         learner_small = LinearLearner()
         state_small = learner_small.init(feature_dim=5)
 
@@ -232,7 +222,7 @@ class TestErrorHandling:
 
         save_checkpoint(state_mlp, tmp_path / "mismatch")
 
-        with pytest.raises(ValueError, match="Leaf count mismatch"):
+        with pytest.raises(ValueError, match="structure mismatch"):
             load_checkpoint(state_small, tmp_path / "mismatch")
 
 
@@ -293,12 +283,68 @@ class TestPathHandling:
 
         chex.assert_trees_all_close(loaded.weights, state.weights)
 
-    def test_path_with_extension_ignored(self, tmp_path):
-        """Extension in path should be replaced, not appended."""
+    def test_checkpoint_is_directory(self, tmp_path):
+        """Checkpoint should be saved as a directory."""
         learner = LinearLearner()
         state = learner.init(feature_dim=5)
 
-        # Even if user passes .npz, we still use our own suffixing
         save_checkpoint(state, tmp_path / "test")
-        assert (tmp_path / "test.npz").exists()
-        assert (tmp_path / "test.json").exists()
+        assert (tmp_path / "test").is_dir()
+
+
+class TestLoadCheckpointMetadata:
+    """Tests for load_checkpoint_metadata (metadata-only loading)."""
+
+    def test_metadata_without_template(self, tmp_path):
+        """Should load metadata without needing a state template."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim=5)
+        metadata = {"learner_config": {"type": "mlp", "hidden": [64, 64]}, "version": 3}
+
+        save_checkpoint(state, tmp_path / "meta_only", metadata=metadata)
+        loaded_meta = load_checkpoint_metadata(tmp_path / "meta_only")
+
+        assert loaded_meta == metadata
+
+    def test_empty_metadata(self, tmp_path):
+        """Should return empty dict when no metadata was saved."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim=5)
+
+        save_checkpoint(state, tmp_path / "no_meta")
+        loaded_meta = load_checkpoint_metadata(tmp_path / "no_meta")
+
+        assert loaded_meta == {}
+
+    def test_internal_version_stripped(self, tmp_path):
+        """Internal _format_version should not appear in returned metadata."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim=5)
+
+        save_checkpoint(state, tmp_path / "version", metadata={"epoch": 1})
+        loaded_meta = load_checkpoint_metadata(tmp_path / "version")
+
+        assert "_format_version" not in loaded_meta
+        assert loaded_meta == {"epoch": 1}
+
+
+class TestCheckpointExists:
+    """Tests for checkpoint_exists utility."""
+
+    def test_exists_after_save(self, tmp_path):
+        """checkpoint_exists should return True after saving."""
+        learner = LinearLearner()
+        state = learner.init(feature_dim=5)
+
+        assert not checkpoint_exists(tmp_path / "ckpt")
+        save_checkpoint(state, tmp_path / "ckpt")
+        assert checkpoint_exists(tmp_path / "ckpt")
+
+    def test_not_exists_for_missing(self, tmp_path):
+        """checkpoint_exists should return False for non-existent path."""
+        assert not checkpoint_exists(tmp_path / "nonexistent")
+
+    def test_not_exists_for_plain_file(self, tmp_path):
+        """checkpoint_exists should return False for a regular file."""
+        (tmp_path / "not_a_ckpt").touch()
+        assert not checkpoint_exists(tmp_path / "not_a_ckpt")

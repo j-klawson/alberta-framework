@@ -133,7 +133,7 @@ General Value Functions (Sutton et al. 2011) represent knowledge as value functi
 
 ### Key Features (brief)
 - **Single-step API**: `predict()`/`update()` with unbatched 1D obs for daemon use, JIT-compiled automatically (see `docs/guide/daemon-usage.md`)
-- **Checkpoint utils**: `save_checkpoint`/`load_checkpoint` (npz + json)
+- **Checkpoint utils**: `save_checkpoint`/`load_checkpoint`/`load_checkpoint_metadata`/`checkpoint_exists` (Orbax)
 - **Config serialization**: `to_config()`/`from_config()` on all components; dispatchers: `optimizer_from_config()`, etc.
 - **Feature diagnostics**: `compute_feature_relevance` (zero-cost), `compute_feature_sensitivity` (Jacobian)
 - **Lifecycle tracking**: `step_count`, `birth_timestamp`, `uptime_s` on all learner states; `agent_age_s()`, `agent_uptime_s()`

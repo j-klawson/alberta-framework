@@ -41,6 +41,7 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - `MultiHeadMLPLearner` linear baseline support (`hidden_sizes=()`)
 - Feature relevance diagnostics (`compute_feature_relevance`, `compute_feature_sensitivity`, `relevance_to_dict`) for periodic daemon reporting
 - IDBD-MLP optimizer (Meyer): per-parameter adaptive step-sizes for MLPs via `IDBDParamState`, with `h_decay_mode` (`prediction_grads`/`loss_grads`)
+- Orbax checkpointing: replaced hand-rolled npz+json with `orbax-checkpoint` for versioned pytree serialization; added `load_checkpoint_metadata` and `checkpoint_exists` utilities
 
 **Planned**:
 - Neuron utility tracking (per-hidden-unit EMA of gradient magnitude)

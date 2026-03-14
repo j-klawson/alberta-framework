@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "alberta-framework"
-version = "0.14.0"
+version = "0.15.0"
 description = "Implementation of the Alberta Plan for AI Research - continual learning with meta-learned step-sizes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -31,6 +31,7 @@ dependencies = [
     "tqdm>=4.66",
     "chex>=0.1.86",
     "jaxtyping>=0.2.28",
+    "orbax-checkpoint>=0.11",
 ]
 
 [project.optional-dependencies]
@@ -136,6 +137,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "plotnine.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "orbax.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tensorstore.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
