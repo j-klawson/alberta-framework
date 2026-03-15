@@ -734,7 +734,7 @@ class TestPerHeadGammaLamda:
 
         learner_default = MultiHeadMLPLearner(
             n_heads=2,
-            hidden_sizes=(16,),
+            hidden_sizes=(),
             sparsity=0.0,
             gamma=0.5,
             lamda=0.3,
@@ -742,7 +742,7 @@ class TestPerHeadGammaLamda:
         )
         learner_explicit = MultiHeadMLPLearner(
             n_heads=2,
-            hidden_sizes=(16,),
+            hidden_sizes=(),
             sparsity=0.0,
             gamma=0.5,
             lamda=0.3,

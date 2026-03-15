@@ -40,7 +40,7 @@ References
 - Streaming Deep Reinforcement Learning Finally Works (Elsayed et al., 2024)
 """
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 # Checkpoint utilities
 from alberta_framework.core.checkpoints import (
@@ -126,6 +126,20 @@ from alberta_framework.core.optimizers import (
     TDOptimizerUpdate,
     bounder_from_config,
     optimizer_from_config,
+)
+
+# SARSA (Step 4a)
+from alberta_framework.core.sarsa import (
+    SARSAAgent,
+    SARSAArrayResult,
+    SARSAConfig,
+    SARSAContinuingResult,
+    SARSAEpisodeResult,
+    SARSAState,
+    SARSAUpdateResult,
+    run_sarsa_continuing,
+    run_sarsa_episode,
+    run_sarsa_from_arrays,
 )
 from alberta_framework.core.types import (
     AutostepParamState,
@@ -310,6 +324,17 @@ __all__ = [
     "create_horde_spec",
     "run_horde_learning_loop",
     "run_horde_learning_loop_batched",
+    # SARSA (Step 4a)
+    "SARSAAgent",
+    "SARSAArrayResult",
+    "SARSAConfig",
+    "SARSAContinuingResult",
+    "SARSAEpisodeResult",
+    "SARSAState",
+    "SARSAUpdateResult",
+    "run_sarsa_continuing",
+    "run_sarsa_episode",
+    "run_sarsa_from_arrays",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",

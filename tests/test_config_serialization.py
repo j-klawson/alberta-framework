@@ -258,7 +258,7 @@ class TestMultiHeadMLPLearnerConfig:
             head_optimizer=LMS(step_size=0.1),
             sparsity=0.9,
             use_layer_norm=True,
-            gamma=0.99,
+            gamma=0.0,
             lamda=0.9,
         )
         config = learner.to_config()

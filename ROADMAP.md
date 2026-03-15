@@ -50,7 +50,7 @@ The Alberta Framework follows the 12-step "retreat and return" strategy from the
 - Comparison studies across diverse non-stationarity types
 - AdaptiveObGD (Appendix B of Elsayed et al. 2024) with RMSProp-style second-moment normalization
 
-## Step 3: GVF Prediction & Horde — Next (v0.15.0+)
+## Step 3: GVF Prediction & Horde — Phase 1 Complete (v0.15.0)
 
 **Goal**: Move from supervised prediction to General Value Function (GVF) predictions using the Horde architecture. Formalize rlsecd's existing multi-head predictions as GVF demons, extend to temporal predictions (γ > 0) with eligibility traces, and build the foundation that Step 4 control will use.
 
@@ -121,23 +121,28 @@ Step 3 extends these to temporal predictions (γ > 0): "will this session become
 
 When implementing temporal GVF predictions (γ > 0), we need to decide whether to use discounted reward, average reward, or both. The Alberta group argues that discounted reward is "a hack" — the discount factor γ conflates two distinct roles (prediction horizon and value weighting), and average-reward formulations are more natural for continuing, non-episodic agents. The Alberta Plan explicitly calls for average-reward methods in Steps 5–6, so building on discounted reward first may create technical debt. On the other hand, discounted reward is simpler to implement initially and has more established tooling (e.g., standard TD(λ), SARSA). Decide before committing to the Phase 2/3 TD target computation.
 
-## Step 4: Control — Planned
+## Step 4: Control — Step 4a Complete (v0.16.0)
 
 **Goal**: Introduce action selection. Move from prediction-only agents to control using the GVF/Horde infrastructure from Step 3. A control demon is a GVF where π = greedy(q̂) — prediction and control are the same mechanism (Sutton et al. 2011, §4).
 
 The Alberta Plan's Step 4 ("Control I: Continual actor-critic control" — Sutton et al. 2022, p.8) says: *"The critic would presumably be that resulting from Steps 1-3."* The GVF prediction machinery from Step 3 IS the critic.
 
-### Step 4a: SARSA — On-Policy TD Control
+### Step 4a: SARSA — On-Policy TD Control — Complete (v0.16.0)
 
 **Goal**: Add the first control demon to the Horde. SARSA is on-policy (behavior policy = target policy), so no importance sampling is needed — the simplest possible control demon.
 
-**Key components**:
-- `SARSAAgent` wrapping `MultiHeadMLPLearner` with a `HordeSpec` containing both prediction and control demons
-- The SARSA Q-function is a control demon: `GVFSpec(cumulant=reward, gamma=0.99, policy=greedy(q̂))`
-- ε-greedy is the *behavior policy* — the demon's *target policy* is greedy (on-policy since ε-greedy ≈ greedy for evaluation)
-- SARSA update: `Q(s,a) ← Q(s,a) + α[r + γQ(s',a') - Q(s,a)]` using eligibility traces from Step 3
-- Per-action head updates via existing NaN-masking mechanism
+**Delivered**:
+- `SARSAAgent` wrapping `HordeLearner` with epsilon-greedy action selection and SARSA target computation
+- `SARSAConfig`: n_actions, gamma, epsilon schedule (linear decay)
+- Control demons use gamma=0 internally; real discount in `SARSAConfig.gamma` (SARSA target computed externally)
+- Gumbel trick tie-breaking for uniform action selection among equal Q-values
+- NaN-masking: only taken action's head receives target per step
+- Mixed Horde: optional prediction demons coexist with control demons
+- Three learning loops: `run_sarsa_episode` (episodic), `run_sarsa_continuing` (daemon-style), `run_sarsa_from_arrays` (JIT-compiled scan)
 - Integration with all composable components (Optimizer, Bounder, Normalizer)
+- Config serialization roundtrip via `to_config()` / `from_config()`
+- Trunk trace guard: `MultiHeadMLPLearner` validates trunk `gamma * lamda = 0` when hidden layers present
+- 30 tests, example (`sarsa_cartpole.py`), documentation (`sarsa-control.md`)
 
 **Downstream: rlsecd as active defender**:
 - rlsecd gains `--gym-control` mode: existing prediction demons + one SARSA control demon

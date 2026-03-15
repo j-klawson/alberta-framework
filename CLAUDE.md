@@ -4,7 +4,7 @@ A research-first framework for the Alberta Plan: Building the foundations of Con
 
 ## Project Overview
 
-Implements the Alberta Plan for AI Research, progressing through increasingly complex continual learning settings. Step 1 (complete): IDBD/Autostep beat hand-tuned LMS. Step 2 (substantial): nonlinear function approximation with MLP, ObGD, and IDBD-MLP. Step 3 (next): GVF prediction and Horde architecture.
+Implements the Alberta Plan for AI Research, progressing through increasingly complex continual learning settings. Step 1 (complete): IDBD/Autostep beat hand-tuned LMS. Step 2 (substantial): nonlinear function approximation with MLP, ObGD, and IDBD-MLP. Step 3 Phase 1 (complete): GVF types, HordeLearner, per-head trace decay. Step 4a (complete): SARSA on-policy control via Horde.
 
 **Core Philosophy**: Temporal uniformity — every component updates at every time step.
 
@@ -28,6 +28,8 @@ src/alberta_framework/
 │   ├── initializers.py     # sparse_init (LeCun + sparsity)
 │   ├── learners.py         # LinearLearner, MLPLearner, TDLinearLearner, learning loops
 │   ├── multi_head_learner.py  # MultiHeadMLPLearner, multi-head learning loops
+│   ├── horde.py             # HordeLearner, GVF demons, Horde learning loops
+│   ├── sarsa.py             # SARSAAgent, SARSA control via Horde, learning loops
 │   └── diagnostics.py      # FeatureRelevance, compute_feature_relevance, compute_feature_sensitivity
 ├── streams/
 │   ├── base.py             # ScanStream protocol
@@ -126,10 +128,13 @@ Per-unit gradient clipping scaled by weight norm. Fine-grained unlike ObGD's glo
 `Input -> [Dense -> LayerNorm -> LeakyReLU] x N -> Dense(1)`. Sparse init (90%), composable optimizer/bounder/normalizer, optional `head_optimizer` for trunk/head split. Toggleable `use_layer_norm`.
 
 ### MultiHeadMLPLearner
-Shared trunk, N independent heads. VJP with accumulated cotangents. NaN targets mask inactive heads. Same composability as MLPLearner. Supports `hidden_sizes=()` for linear baseline. Serves as the foundation for the Horde architecture (Step 3) — each head is a GVF demon.
+Shared trunk, N independent heads. VJP with accumulated cotangents. NaN targets mask inactive heads. Same composability as MLPLearner. Supports `hidden_sizes=()` for linear baseline. **Trunk trace constraint**: trunk `gamma * lamda` must be 0 when hidden layers present (VJP folds error into cotangent before trace accumulation). Use `HordeLearner` for per-head trace decay.
 
-### GVF / Horde (Step 3 — Next)
-General Value Functions (Sutton et al. 2011) represent knowledge as value functions with four question functions: policy π, pseudo-termination γ, pseudo-reward r (cumulant), and pseudo-terminal-reward z. A **prediction demon** has a fixed π; a **control demon** has π = greedy(q̂). The Horde is many demons learning in parallel — `MultiHeadMLPLearner` is the proto-Horde. rlsecd's 5 heads are implicit prediction demons (γ=0, π=behavior). Step 3 formalizes this with `GVFSpec` types and adds TD(λ) eligibility traces for MLP. Step 4 (SARSA) then adds a control demon to the Horde.
+### GVF / Horde (Step 3)
+General Value Functions (Sutton et al. 2011) represent knowledge as value functions with four question functions: policy π, pseudo-termination γ, pseudo-reward r (cumulant), and pseudo-terminal-reward z. A **prediction demon** has a fixed π; a **control demon** has π = greedy(q̂). `HordeLearner` wraps `MultiHeadMLPLearner` with per-demon gamma/lambda, TD target computation, and GVF metadata. Trunk always gamma=0 (avoids trace-error coupling); per-head trace decay via `per_head_gamma_lamda`.
+
+### SARSA (Step 4a)
+`SARSAAgent` wraps `HordeLearner` with epsilon-greedy action selection. Each action maps to a control demon (gamma=0 internally; real discount in `SARSAConfig.gamma`). SARSA target `r + gamma * Q(s', a')` computed externally, passed as cumulant. Gumbel trick tie-breaking. Linear epsilon decay. Optional prediction demons coexist with Q-heads. Three loops: `run_sarsa_episode` (episodic), `run_sarsa_continuing` (daemon), `run_sarsa_from_arrays` (JIT scan).
 
 ### Key Features (brief)
 - **Single-step API**: `predict()`/`update()` with unbatched 1D obs for daemon use, JIT-compiled automatically (see `docs/guide/daemon-usage.md`)
@@ -143,6 +148,7 @@ General Value Functions (Sutton et al. 2011) represent knowledge as value functi
 - **Gymnasium**: `collect_trajectory` + `learn_from_trajectory`; PredictionMode (REWARD, NEXT_STATE, VALUE)
 - **Publication utils**: `run_multi_seed_experiment`, `pairwise_comparisons`, `plot_learning_curves`, `generate_latex_table`
 - **Streams**: RandomWalk, AbruptChange, Cyclic, Periodic, ScaledStreamWrapper, DynamicScaleShift, ScaleDrift
+- **SARSA**: `SARSAAgent` for on-policy control, episodic/continuing/scan loops, config serialization
 - **bsuite**: Q-learning via MultiHeadMLPLearner (n_heads=num_actions), ContinuingWrapper, 3 agents (autostep/lms/adam)
 - **Timer**: `with Timer("name"):` context manager for runtime reporting
 

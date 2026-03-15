@@ -194,6 +194,17 @@ class MultiHeadMLPLearner:
     only one backward pass through the trunk is needed regardless of the
     number of active heads.
 
+    **Trunk trace constraint**: When ``hidden_sizes`` is non-empty (MLP mode),
+    trunk ``gamma * lamda`` must be 0. The VJP backward pass folds per-head
+    errors into the trunk cotangent *before* trace accumulation, so traces
+    accumulate error-weighted gradients. For ``gamma * lamda = 0`` this is
+    correct (traces reset each step). For ``gamma * lamda > 0`` it would
+    produce biased trace updates that violate forward-view equivalence
+    (Sutton & Barto Ch. 12). Use ``HordeLearner`` for per-head trace decay
+    — it sets trunk ``gamma=0, lamda=0`` and applies per-head
+    ``gamma * lambda`` only to the head layers. For linear baselines
+    (``hidden_sizes=()``), there is no trunk, so any ``gamma * lamda`` is fine.
+
     Attributes:
         n_heads: Number of prediction heads
         hidden_sizes: Tuple of hidden layer sizes. Pass ``()`` for a multi-head
@@ -288,6 +299,21 @@ class MultiHeadMLPLearner:
         self._leaky_relu_slope = leaky_relu_slope
         self._use_layer_norm = use_layer_norm
         self._per_head_gl: tuple[float, ...] | None = per_head_gamma_lamda
+
+        # Validate trunk trace constraint: gamma*lamda > 0 is only safe
+        # when there is no trunk (linear baseline). With a trunk, the VJP
+        # cotangent folds error into gradients before trace accumulation,
+        # producing biased traces when gamma*lamda > 0.
+        if gamma * lamda > 0 and len(hidden_sizes) > 0:
+            msg = (
+                f"Trunk gamma*lamda must be 0 when hidden_sizes is non-empty "
+                f"(got gamma={gamma}, lamda={lamda}, hidden_sizes={hidden_sizes}). "
+                f"The VJP backward pass bakes error into trunk gradients before "
+                f"trace accumulation, which is only correct when traces reset "
+                f"each step (gamma*lamda=0). Use HordeLearner for per-head "
+                f"trace decay with a shared trunk."
+            )
+            raise ValueError(msg)
 
     @property
     def n_heads(self) -> int:
@@ -617,6 +643,10 @@ class MultiHeadMLPLearner:
 
             # Accumulate cotangent: error_i * d(pred_i)/d(hidden)
             # d(pred_i)/d(hidden) = head_w_i squeezed to (H_last,)
+            # NOTE: Error is folded into the cotangent here, so trunk VJP
+            # gradients are error-weighted. This is safe because trunk
+            # gamma*lamda=0 (validated in __init__), so traces reset each
+            # step and the error-gradient coupling doesn't accumulate.
             cotangent = cotangent + masked_error_i * jnp.squeeze(
                 state.head_params.weights[i]
             )

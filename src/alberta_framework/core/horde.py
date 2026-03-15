@@ -6,9 +6,15 @@ Wraps ``MultiHeadMLPLearner`` to add:
 - GVF metadata and typed update results
 
 Architecture decision: the trunk has no temporal trace decay (gamma=0).
-Per-demon gamma/lambda applies only to heads. This matches rlsecd's
-current usage and avoids O(n_heads x trunk_params) memory for per-demon
-trunk traces.
+Per-demon gamma/lambda applies only to heads. This avoids the
+trace-error coupling problem: ``MultiHeadMLPLearner``'s VJP backward
+pass folds per-head errors into the trunk cotangent *before* trace
+accumulation, so trunk traces accumulate error-weighted gradients.
+With trunk gamma=0, traces reset each step and this is correct.
+If trunk gamma*lamda > 0, traces would carry biased error-gradient
+products across steps, violating forward-view equivalence (Sutton &
+Barto Ch. 12). This also avoids O(n_heads x trunk_params) memory
+for per-demon trunk traces.
 
 Reference: Sutton et al. 2011, "Horde: A Scalable Real-time Architecture
 for Learning Knowledge from Unsupervised Sensorimotor Interaction"

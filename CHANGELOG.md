@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-03-15
+
+### Added
+
+- **SARSA agent (Step 4a)** — on-policy control via Horde architecture
+  - `SARSAAgent`: wraps `HordeLearner` with epsilon-greedy action selection and SARSA target computation
+  - `SARSAConfig`: configuration for n_actions, gamma, epsilon schedule
+  - `SARSAState`, `SARSAUpdateResult`: immutable state and result types
+  - `run_sarsa_episode`: Python loop for episodic Gymnasium environments
+  - `run_sarsa_continuing`: continuing mode with pseudo-boundary handling (daemon-style)
+  - `run_sarsa_from_arrays`: JIT-compiled `jax.lax.scan` for pre-collected data (security-gym)
+  - Gumbel trick tie-breaking for uniform action selection among equal Q-values
+  - Linear epsilon decay schedule (configurable start, end, decay steps)
+  - Optional prediction demons coexist with control demons in the same Horde
+  - Config serialization via `to_config()` / `from_config()` roundtrip
+  - 30 new tests covering init, action selection, update logic, epsilon decay, bounding, serialization, and scan loop
+  - Example: `examples/The Alberta Plan/Step4/sarsa_cartpole.py`
+  - Documentation: `docs/guide/sarsa-control.md`
+
+- **Trunk trace guard** — validation preventing `gamma * lamda > 0` on `MultiHeadMLPLearner` with hidden layers
+  - VJP backward pass folds error into trunk cotangent before trace accumulation; only correct when traces reset each step
+  - Linear baseline (`hidden_sizes=()`) allows any gamma/lamda
+  - `HordeLearner` enforces trunk gamma=0 by design (per-head trace decay only)
+  - Expanded docstrings on `MultiHeadMLPLearner` and `HordeLearner` explaining the constraint
+
 ## [0.10.0] - 2026-02-27
 
 ### Added
