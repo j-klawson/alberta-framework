@@ -58,6 +58,16 @@ from alberta_framework.core.diagnostics import (
     relevance_to_dict,
 )
 
+# Horde / GVF (Step 3)
+from alberta_framework.core.horde import (
+    BatchedHordeResult,
+    HordeLearner,
+    HordeLearningResult,
+    HordeUpdateResult,
+    run_horde_learning_loop,
+    run_horde_learning_loop_batched,
+)
+
 # Core types
 # Learners
 # Initializers
@@ -123,6 +133,9 @@ from alberta_framework.core.types import (
     AutoTDIDBDState,
     BatchedLearningResult,
     BatchedMLPResult,
+    DemonType,
+    GVFSpec,
+    HordeSpec,
     IDBDParamState,
     IDBDState,
     LearnerState,
@@ -144,6 +157,7 @@ from alberta_framework.core.types import (
     agent_age_s,
     agent_uptime_s,
     create_autotdidbd_state,
+    create_horde_spec,
     create_obgd_state,
     create_tdidbd_state,
 )
@@ -285,6 +299,17 @@ __all__ = [
     "multi_head_metrics_to_dicts",
     "run_multi_head_learning_loop",
     "run_multi_head_learning_loop_batched",
+    # GVF / Horde (Step 3)
+    "BatchedHordeResult",
+    "DemonType",
+    "GVFSpec",
+    "HordeLearner",
+    "HordeLearningResult",
+    "HordeSpec",
+    "HordeUpdateResult",
+    "create_horde_spec",
+    "run_horde_learning_loop",
+    "run_horde_learning_loop_batched",
     # Learners - TD Learning
     "TDLinearLearner",
     "run_td_learning_loop",

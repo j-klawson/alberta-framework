@@ -1,5 +1,13 @@
 """Core components for the Alberta Framework."""
 
+from alberta_framework.core.horde import (
+    BatchedHordeResult,
+    HordeLearner,
+    HordeLearningResult,
+    HordeUpdateResult,
+    run_horde_learning_loop,
+    run_horde_learning_loop_batched,
+)
 from alberta_framework.core.learners import LinearLearner, TDLinearLearner, TDUpdateResult
 from alberta_framework.core.optimizers import (
     IDBD,
@@ -12,6 +20,9 @@ from alberta_framework.core.optimizers import (
 )
 from alberta_framework.core.types import (
     AutoTDIDBDState,
+    DemonType,
+    GVFSpec,
+    HordeSpec,
     IDBDState,
     LearnerState,
     LMSState,
@@ -22,6 +33,7 @@ from alberta_framework.core.types import (
     TDLearnerState,
     TDTimeStep,
     TimeStep,
+    create_horde_spec,
 )
 
 __all__ = [
@@ -48,4 +60,15 @@ __all__ = [
     "TDOptimizerUpdate",
     "TDTimeStep",
     "TDUpdateResult",
+    # GVF / Horde (Step 3)
+    "BatchedHordeResult",
+    "DemonType",
+    "GVFSpec",
+    "HordeLearner",
+    "HordeLearningResult",
+    "HordeSpec",
+    "HordeUpdateResult",
+    "create_horde_spec",
+    "run_horde_learning_loop",
+    "run_horde_learning_loop_batched",
 ]

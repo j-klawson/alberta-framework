@@ -247,6 +247,7 @@ class MultiHeadMLPLearner:
         leaky_relu_slope: float = 0.01,
         use_layer_norm: bool = True,
         head_optimizer: AnyOptimizer | None = None,
+        per_head_gamma_lamda: tuple[float, ...] | None = None,
     ):
         """Initialize the multi-head MLP learner.
 
@@ -269,6 +270,11 @@ class MultiHeadMLPLearner:
                 trunk (hidden) layers use ``optimizer`` while each head uses
                 ``head_optimizer``. This enables hybrid configurations like
                 stable LMS for the trunk with adaptive Autostep for the heads.
+            per_head_gamma_lamda: Optional per-head trace decay factors.
+                When set, each head uses its own ``gamma * lambda`` product
+                for trace decay instead of the global ``gamma * lamda``.
+                Length must equal ``n_heads``. Used by ``HordeLearner``
+                to assign per-demon discount/trace parameters.
         """
         self._n_heads = n_heads
         self._hidden_sizes = hidden_sizes
@@ -281,6 +287,7 @@ class MultiHeadMLPLearner:
         self._sparsity = sparsity
         self._leaky_relu_slope = leaky_relu_slope
         self._use_layer_norm = use_layer_norm
+        self._per_head_gl: tuple[float, ...] | None = per_head_gamma_lamda
 
     @property
     def n_heads(self) -> int:
@@ -320,6 +327,9 @@ class MultiHeadMLPLearner:
             "use_layer_norm": self._use_layer_norm,
             "gamma": self._gamma,
             "lamda": self._lamda,
+            "per_head_gamma_lamda": (
+                list(self._per_head_gl) if self._per_head_gl is not None else None
+            ),
         }
         return config
 
@@ -354,6 +364,10 @@ class MultiHeadMLPLearner:
             optimizer_from_config(head_opt_cfg) if head_opt_cfg is not None else None
         )
 
+        per_head_gl = config.pop("per_head_gamma_lamda", None)
+        if per_head_gl is not None:
+            per_head_gl = tuple(per_head_gl)
+
         return cls(
             n_heads=config.pop("n_heads"),
             hidden_sizes=tuple(config.pop("hidden_sizes")),
@@ -361,6 +375,7 @@ class MultiHeadMLPLearner:
             bounder=bounder,
             normalizer=normalizer,
             head_optimizer=head_optimizer,
+            per_head_gamma_lamda=per_head_gl,
             **config,
         )
 
@@ -683,9 +698,14 @@ class MultiHeadMLPLearner:
             w_grad = hidden.reshape(1, -1)  # (1, H_last)
             b_grad = jnp.ones(1, dtype=jnp.float32)
 
-            # Update traces
-            new_w_trace = gamma_lamda * old_w_trace + w_grad
-            new_b_trace = gamma_lamda * old_b_trace + b_grad
+            # Update traces (per-head decay if configured)
+            head_gl = (
+                jnp.array(self._per_head_gl[i], dtype=jnp.float32)
+                if self._per_head_gl is not None
+                else gamma_lamda
+            )
+            new_w_trace = head_gl * old_w_trace + w_grad
+            new_b_trace = head_gl * old_b_trace + b_grad
 
             # Error for this head (masked to 0 for inactive)
             error_i = jnp.where(

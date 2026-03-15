@@ -4,7 +4,10 @@ This module defines the core data types used throughout the framework,
 using chex dataclasses for JAX compatibility and jaxtyping for shape annotations.
 """
 
+import enum
 import time
+from collections.abc import Sequence
+from typing import Any
 
 import chex
 import jax.numpy as jnp
@@ -641,3 +644,127 @@ def agent_uptime_s(state: object) -> float:
         Cumulative seconds the agent has spent inside learning loops
     """
     return float(getattr(state, "uptime_s", 0.0))
+
+
+# =============================================================================
+# GVF / Horde Types (Step 3 of Alberta Plan)
+# =============================================================================
+
+
+class DemonType(enum.Enum):
+    """Type of GVF demon.
+
+    A prediction demon has a fixed policy and learns to predict.
+    A control demon learns a policy (e.g. via SARSA) — Step 4.
+    """
+
+    PREDICTION = "prediction"
+    CONTROL = "control"
+
+
+@chex.dataclass(frozen=True)
+class GVFSpec:
+    """One GVF demon's question functions (Sutton et al. 2011).
+
+    Declarative, not callable — JAX pytree-compatible.
+    Cumulant values are computed externally and passed as arrays.
+
+    Attributes:
+        name: Human-readable name for this demon
+        demon_type: Whether this is a prediction or control demon
+        gamma: Pseudo-termination discount (0.0 = single-step prediction)
+        lamda: Trace decay parameter (0.0 = no eligibility traces)
+        cumulant_index: Index into targets array, or -1 for external cumulant
+        terminal_reward: Terminal pseudo-reward z (default 0.0)
+    """
+
+    name: str
+    demon_type: DemonType
+    gamma: float
+    lamda: float
+    cumulant_index: int
+    terminal_reward: float = 0.0
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize to dict.
+
+        Returns:
+            Dict with all fields needed to recreate the GVFSpec.
+        """
+        return {
+            "name": self.name,
+            "demon_type": self.demon_type.value,
+            "gamma": self.gamma,
+            "lamda": self.lamda,
+            "cumulant_index": self.cumulant_index,
+            "terminal_reward": self.terminal_reward,
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "GVFSpec":
+        """Reconstruct from config dict.
+
+        Args:
+            config: Dict as produced by ``to_config()``
+
+        Returns:
+            Reconstructed GVFSpec
+        """
+        config = dict(config)
+        config["demon_type"] = DemonType(config["demon_type"])
+        return cls(**config)
+
+
+@chex.dataclass(frozen=True)
+class HordeSpec:
+    """Collection of GVF demons, one per head.
+
+    Attributes:
+        demons: Tuple of GVFSpec, one per demon/head
+        gammas: Pre-computed gamma array for JIT, shape ``(n_demons,)``
+        lamdas: Pre-computed lambda array for JIT, shape ``(n_demons,)``
+    """
+
+    demons: tuple[GVFSpec, ...]
+    gammas: Float[Array, " n_demons"]
+    lamdas: Float[Array, " n_demons"]
+
+    def to_config(self) -> dict[str, Any]:
+        """Serialize to dict.
+
+        Returns:
+            Dict with demons list, each serialized via ``GVFSpec.to_config()``.
+        """
+        return {
+            "demons": [d.to_config() for d in self.demons],
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "HordeSpec":
+        """Reconstruct from config dict.
+
+        Args:
+            config: Dict as produced by ``to_config()``
+
+        Returns:
+            Reconstructed HordeSpec via ``create_horde_spec``
+        """
+        demons = [GVFSpec.from_config(d) for d in config["demons"]]
+        return create_horde_spec(demons)
+
+
+def create_horde_spec(demons: Sequence[GVFSpec]) -> HordeSpec:
+    """Create a HordeSpec from a sequence of GVFSpec demons.
+
+    Pre-computes gamma and lambda arrays for efficient JIT usage.
+
+    Args:
+        demons: Sequence of GVFSpec, one per demon/head
+
+    Returns:
+        HordeSpec with pre-computed arrays
+    """
+    demons_tuple = tuple(demons)
+    gammas = jnp.array([d.gamma for d in demons_tuple], dtype=jnp.float32)
+    lamdas = jnp.array([d.lamda for d in demons_tuple], dtype=jnp.float32)
+    return HordeSpec(demons=demons_tuple, gammas=gammas, lamdas=lamdas)
